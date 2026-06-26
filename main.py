@@ -1,38 +1,13 @@
-# import cv2
+from load_image import LoadImage
+from search import SearchImage
 
-# face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
+img_path = "" 
+hospital_name = "" 
+optional_name = ""
 
-# cap = cv2.VideoCapture(0)
+# loadImage = LoadImage("yo_1.jpg","programando esta app","Jose")
+# loadImage.loadData()
 
-# while True:
-#     _, img = cap.read()
-#     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-#     faces = face_cascade.detectMultiScale(gray,1.1,4)
-#     for (x,y,w,h) in faces:
-#         cv2.rectangle(img, (x,y),(x*w,y*h),(255,0,0),2)
-#     cv2.imshow("img",img)
-#     k = cv2.waitKey(30)
-#     if k == 27:
-#         break
+searchImage = SearchImage("yo_3.jpg")
 
-# cap.release()
-
-
-import cv2
-import numpy as np
-
-faceClassif = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
-
-image = cv2.imread('oficina.png')
-gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-faces = faceClassif.detectMultiScale(gray,scaleFactor=1.1,minNeighbors=5,minSize=(30,30),maxSize=(200,200))
-
-for (x,y,w,h) in faces:
-    cv2.rectangle(image,(x,y),(x+w,y+h),(0,255,0),2)
-
-# cv2.namedWindow('image', cv2.WINDOW_NORMAL)
-
-cv2.imshow('image',image)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+searchImage.searchImage()
