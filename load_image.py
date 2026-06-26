@@ -34,13 +34,12 @@ class LoadImage():
         )
 
         vector_rostro = resultado[0]["embedding"]
-        # print("vector_rostro",vector_rostro)
 
         new_id = f"usr_{uuid.uuid4()}"
 
         collection.add(
             embeddings=[vector_rostro],
-            metadatas=[{"nombre": self.name, "rol": self.hospital_name}],
+            metadatas=[{"nombre": self.name, "rol": self.hospital_name, "name": self.name, "ci": self.ci}],
             ids=[new_id]
         )
 

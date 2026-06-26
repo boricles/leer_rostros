@@ -1,13 +1,14 @@
 from load_image import LoadImage
-from search import SearchImage
+from search_image import SearchImage
 
-img_path = "" 
-hospital_name = "" 
-optional_name = ""
+img_path = "yo_1.jpg" 
+hospital_name = "programando esta app" 
+optional_name = "Jose"
+optional_ci = 777777777
 
-# loadImage = LoadImage("yo_1.jpg","programando esta app","Jose")
+# loadImage = LoadImage(img_path=img_path,hospital_name=hospital_name,name=optional_name,ci=optional_ci)
 # loadImage.loadData()
 
-searchImage = SearchImage("yo_3.jpg")
+searchImage = SearchImage("mama_2.png")
 
 searchImage.searchImage()
