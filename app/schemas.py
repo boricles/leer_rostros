@@ -3,6 +3,16 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class LoginBody(BaseModel):
+    usuario: str = Field("admin", examples=["admin"])
+    password: str = Field(..., examples=["reencuentros2026"])
+
+
+class LoginResp(BaseModel):
+    token: str
+    tipo: str = "Bearer"
+
+
 class Candidato(BaseModel):
     """Una persona candidata de una búsqueda, con su grado de parecido."""
 

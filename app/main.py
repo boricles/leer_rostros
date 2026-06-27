@@ -8,18 +8,30 @@
 - GET  /admin/personas           lista todos los registros.
 """
 
+import hashlib
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 
 # psycopg (database) ANTES que faces (TensorFlow) para evitar crash nativo.
 from app.config import get_settings
 from app.database import close_pool, get_pool, init_db
 from app import faces, storage
 from app.schemas import (
-    AlertaFamiliar, Candidato, PersonaAdmin, ResultadoBusqueda, ResultadoRegistro,
+    AlertaFamiliar, Candidato, LoginBody, LoginResp, PersonaAdmin,
+    ResultadoBusqueda, ResultadoRegistro,
 )
+
+
+def _admin_token() -> str:
+    return hashlib.sha256(("reencuentros::" + get_settings().admin_password).encode()).hexdigest()
+
+
+def requiere_admin(authorization: str = Header(None, description="Bearer <token> del login de admin.")):
+    """Protege los endpoints de superadmin. Header: `Authorization: Bearer <token>`."""
+    if authorization != f"Bearer {_admin_token()}":
+        raise HTTPException(401, "No autorizado. Inicia sesión en POST /admin/login.")
 
 CONTENT_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 CONF_ALTA = 0.40
@@ -201,6 +213,16 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/admin/login", response_model=LoginResp, tags=["admin"], summary="Login del superadmin")
+def admin_login(datos: LoginBody):
+    """Devuelve un token. Úsalo como header `Authorization: Bearer <token>` en los
+    demás endpoints de admin. Body JSON: `{"usuario":"admin","password":"..."}`."""
+    s = get_settings()
+    if datos.usuario != s.admin_user or datos.password != s.admin_password:
+        raise HTTPException(401, "Usuario o contraseña incorrectos")
+    return LoginResp(token=_admin_token())
+
+
 @app.post("/buscados", response_model=ResultadoBusqueda, status_code=201, tags=["familiar"],
           summary="Familiar: registrar búsqueda y ver coincidencias")
 async def registrar_busqueda(
@@ -286,6 +308,7 @@ async def registrar_encontrado(
 
 
 @app.post("/buscar", response_model=list[Candidato], tags=["admin"],
+          dependencies=[Depends(requiere_admin)],
           summary="Superadmin: comparar una foto contra TODA la base")
 async def buscar_admin(
     file: UploadFile = File(...),
@@ -315,6 +338,7 @@ async def buscar_admin(
 
 
 @app.get("/admin/personas", response_model=list[PersonaAdmin], tags=["admin"],
+         dependencies=[Depends(requiere_admin)],
          summary="Superadmin: listar registros")
 def listar(limite: int = 100, estado: str | None = None, moderacion: str | None = None):
     """Lista registros. Filtra por estado y/o moderación (para revisar/aprobar)."""
@@ -350,6 +374,7 @@ def listar(limite: int = 100, estado: str | None = None, moderacion: str | None 
 
 
 @app.patch("/admin/personas/{person_id}/moderacion", tags=["admin"],
+           dependencies=[Depends(requiere_admin)],
            summary="Aprobar / rechazar una publicación")
 def moderar(person_id: str, valor: str):
     """`valor` = `aprobada` | `rechazada` | `pendiente`. Las rechazadas no aparecen en búsquedas."""
@@ -366,6 +391,7 @@ def moderar(person_id: str, valor: str):
 
 
 @app.delete("/admin/personas/{person_id}", tags=["admin"],
+            dependencies=[Depends(requiere_admin)],
             summary="Eliminar una publicación (contenido indebido)")
 def eliminar(person_id: str):
     """Borra la persona, sus fotos del almacenamiento y sus filas de la BD."""

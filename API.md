@@ -81,6 +81,24 @@ await fetch("/api/encontrados", { method: "POST", body: fd });
 
 ## 🛡️ SUPERADMIN
 
+### Login — `POST /admin/login`
+Body **JSON** (no form-data): `{"usuario":"admin","password":"reencuentros2026"}`.
+Devuelve un token que debes enviar como header en TODOS los endpoints de admin.
+```js
+const r = await fetch("/api/admin/login", {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ usuario: "admin", password: "reencuentros2026" })
+});
+const { token } = await r.json();          // guárdalo
+// en cada llamada admin:
+fetch("/api/admin/personas", { headers: { Authorization: "Bearer " + token } });
+```
+**Respuesta:** `{ "token": "ab92d2...", "tipo": "Bearer" }`.
+Sin token o token inválido → **HTTP 401**. (La contraseña se configura con la
+variable de entorno `ADMIN_PASSWORD`.)
+
+> Todos los endpoints de abajo requieren el header `Authorization: Bearer <token>`.
+
 ### Comparar foto contra toda la base — `POST /buscar`
 **Campos:** `file`* · `limite` (def. 25) · `estado` (`buscada`|`encontrada`|vacío).
 Devuelve un array de candidatos (mismo formato que `coincidencias`).

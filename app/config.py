@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     match_threshold: float = 0.50
     face_detector: str = "retinaface"
 
+    # Superadmin (cámbiala con ADMIN_PASSWORD en producción).
+    admin_user: str = "admin"
+    admin_password: str = "reencuentros2026"
+
     @property
     def endpoint_url(self) -> str:
         """Endpoint S3 del Space; se deriva de la región si no se define."""

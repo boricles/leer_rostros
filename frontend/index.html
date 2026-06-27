@@ -102,6 +102,14 @@
 
   <!-- ADMIN -->
   <section id="admin">
+    <div class="card" id="loginCard">
+      <h2>🔐 Iniciar sesión (superadmin)</h2>
+      <label>Usuario</label><input type="text" id="adm_user" value="admin">
+      <label>Contraseña</label><input type="text" id="adm_pass" placeholder="contraseña">
+      <button class="go" id="adm_login">Entrar</button>
+      <div id="adm_loginres" class="dim" style="margin-top:8px"></div>
+    </div>
+    <div id="adminPanel" style="display:none">
     <div class="card">
       <h2>🛡️ Superadmin — buscar y comparar</h2>
       <p class="hint">Sube una foto y compárala contra toda la base (buscadas y encontradas).</p>
@@ -119,12 +127,24 @@
       <button class="go" id="m_btn">Cargar publicaciones</button>
       <div id="m_res" style="margin-top:12px"></div>
     </div>
+    </div><!-- adminPanel -->
   </section>
 </div>
 
 <script>
 const API="/api";
 const $=id=>document.getElementById(id);
+let ADMIN_TOKEN="";
+function H(){return ADMIN_TOKEN?{Authorization:"Bearer "+ADMIN_TOKEN}:{}}
+async function adminLogin(){
+  const res=$("adm_loginres");res.textContent="Entrando...";
+  try{const r=await fetch(API+"/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({usuario:$("adm_user").value,password:$("adm_pass").value})});
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||"Error");
+    ADMIN_TOKEN=d.token;$("loginCard").style.display="none";$("adminPanel").style.display="block";
+  }catch(e){res.innerHTML='<span class="badge no">'+e.message+'</span>'}
+}
+window.addEventListener("DOMContentLoaded",()=>$("adm_login").addEventListener("click",adminLogin));
 function preview(inp,img){$(inp).addEventListener("change",()=>{if($(inp).files[0]){$(img).src=URL.createObjectURL($(inp).files[0]);$(img).style.display="block"}})}
 preview("f_file","f_prev");preview("r_file","r_prev");preview("a_file","a_prev");
 
@@ -193,7 +213,7 @@ $("a_btn").addEventListener("click",async()=>{
   if(!f){res.innerHTML='Sube una foto.';return}
   const b=$("a_btn");b.disabled=true;res.textContent="Comparando contra la base...";
   const fd=new FormData();fd.append("file",f);fd.append("limite","25");fd.append("estado",$("a_estado").value);
-  try{const r=await fetch(API+"/buscar",{method:"POST",body:fd});const d=await r.json();
+  try{const r=await fetch(API+"/buscar",{method:"POST",body:fd,headers:H()});const d=await r.json();
     if(!r.ok)throw new Error(d.detail||"Error");
     res.innerHTML=`<p class="dim">${d.length} resultados:</p>`+d.map((c,i)=>`<div class="match">
       <img src="${c.image_url}" onerror="this.style.opacity=.3">
@@ -206,7 +226,7 @@ $("a_btn").addEventListener("click",async()=>{
 async function cargarModeracion(){
   const res=$("m_res");res.textContent="Cargando...";
   const q=$("m_filtro").value?("?moderacion="+$("m_filtro").value):"";
-  const d=await (await fetch(API+"/admin/personas"+q)).json();
+  const d=await (await fetch(API+"/admin/personas"+q,{headers:H()})).json();
   if(!d.length){res.innerHTML='<span class="empty">Sin publicaciones.</span>';return}
   res.innerHTML=d.map(p=>{
     const t=p.es_menor?'<i>Menor protegido</i>':((p.nombre||'')+' '+(p.apellido||'')).trim()||'<i>sin nombre</i>';
@@ -221,8 +241,8 @@ async function cargarModeracion(){
       </div></div></div>`;
   }).join("");
 }
-async function moderar(id,valor){await fetch(API+"/admin/personas/"+id+"/moderacion?valor="+valor,{method:"PATCH"});cargarModeracion();}
-async function eliminar(id){if(!confirm("¿Eliminar esta publicación?"))return;await fetch(API+"/admin/personas/"+id,{method:"DELETE"});cargarModeracion();}
+async function moderar(id,valor){await fetch(API+"/admin/personas/"+id+"/moderacion?valor="+valor,{method:"PATCH",headers:H()});cargarModeracion();}
+async function eliminar(id){if(!confirm("¿Eliminar esta publicación?"))return;await fetch(API+"/admin/personas/"+id,{method:"DELETE",headers:H()});cargarModeracion();}
 $("m_btn").addEventListener("click",cargarModeracion);
 </script>
 </body>
