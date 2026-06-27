@@ -1,6 +1,12 @@
-"""Conexión a Postgres + pgvector y esquema de la tabla de personas.
+"""Conexión a Postgres + pgvector y esquema de las tablas.
 
-Una fila = una foto. Varias fotos de la misma persona comparten `person_id`.
+Modelo de datos:
+  - `personas`            -> una fila = una foto. Varias fotos de la misma persona
+                             comparten `person_id`. Aquí viven los metadatos de dominio.
+  - `persona_embeddings`  -> N vectores faciales por foto (base + augmentaciones por
+                             rotación). El reconocimiento (InsightFace buffalo_l) compara
+                             contra esta tabla y toma el mejor embedding por `person_id`.
+
 `estado` distingue los dos flujos:
   - 'buscada'    -> la registró un FAMILIAR que busca a alguien.
   - 'encontrada' -> la registró un RESCATISTA que halló a alguien.
@@ -62,13 +68,14 @@ def init_db() -> None:
         conn.execute("SELECT pg_advisory_lock(927138)")
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         register_vector(conn)
+
+        # --- Tabla de personas: metadatos + 1 fila por foto (sin embedding). ---
         conn.execute(
-            f"""
+            """
             CREATE TABLE IF NOT EXISTS personas (
                 id          UUID PRIMARY KEY,
                 image_url   TEXT NOT NULL,
                 image_key   TEXT NOT NULL,
-                embedding   vector({s.embedding_dim}) NOT NULL,
                 created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
@@ -79,9 +86,34 @@ def init_db() -> None:
         conn.execute("UPDATE personas SET person_id = id WHERE person_id IS NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS personas_person_id_idx ON personas (person_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS personas_estado_idx ON personas (estado)")
-        # HNSW para búsqueda vectorial rápida a escala.
+
+        # --- Migración del esquema antiguo (DeepFace/Facenet512) ---
+        # Los embeddings vivían como columna en `personas`. Con InsightFace buffalo_l
+        # los vectores no son comparables: se mueven a `persona_embeddings` y se elimina
+        # la columna vieja junto a su índice. (Los datos viejos se recrean re-registrando.)
+        conn.execute("DROP INDEX IF EXISTS personas_embedding_hnsw")
+        conn.execute("ALTER TABLE personas DROP COLUMN IF EXISTS embedding")
+
+        # --- Tabla de embeddings: N vectores por foto (base + rotaciones ±15°). ---
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS personas_embedding_hnsw "
-            "ON personas USING hnsw (embedding vector_cosine_ops)"
+            f"""
+            CREATE TABLE IF NOT EXISTS persona_embeddings (
+                id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                foto_id        UUID NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+                embedding      vector({s.embedding_dim}) NOT NULL,
+                calidad_rostro FLOAT NOT NULL DEFAULT 1.0,
+                created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS persona_embeddings_foto_idx "
+            "ON persona_embeddings (foto_id)"
+        )
+        # HNSW para búsqueda por distancia coseno rápida a escala (sin entrenamiento previo).
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS persona_embeddings_hnsw "
+            "ON persona_embeddings USING hnsw (embedding vector_cosine_ops)"
+        )
+
         conn.execute("SELECT pg_advisory_unlock(927138)")

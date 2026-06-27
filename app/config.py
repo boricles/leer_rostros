@@ -28,15 +28,15 @@ class Settings(BaseSettings):
     def usa_spaces(self) -> bool:
         return bool(self.spaces_key and self.spaces_secret and self.spaces_bucket)
 
-    # Reconocimiento facial.
-    # Facenet512 + retinaface = mejor combinación según benchmark a escala (LFW
-    # 97-100%) y la literatura: el más robusto a fotos mal encuadradas y diversas,
-    # ideal para fotos de rescate. SFace gana en fotos perfectas pero NO generaliza.
-    # Umbral 0.50 calibrado con datos reales (misma persona <=0.469, distintas >=0.549).
-    face_model: str = "Facenet512"
+    # Reconocimiento facial — InsightFace buffalo_l (ArcFace w600k_r50, 512-dim) +
+    # RetinaFace como detector. buffalo_l es SOTA en pose variada (CFP-FP), entrenado
+    # con augmentación masiva de ángulo: ideal para fotos de rescate (3/4, perfil).
+    # Cada foto registrada genera además augmentaciones por rotación (±15°).
     embedding_dim: int = 512
-    match_threshold: float = 0.50
-    face_detector: str = "retinaface"
+    match_threshold: float = 0.55            # distancia coseno por debajo = coincidencia
+    min_face_quality: float = 0.50           # det_score mínimo de InsightFace (0–1)
+    confidence_sigmoid_k: float = 12.0       # pendiente de la curva de confianza
+    confidence_sigmoid_midpoint: float = 0.40  # distancia donde la confianza = 50 %
 
     # Superadmin (cámbiala con ADMIN_PASSWORD en producción).
     admin_user: str = "admin"

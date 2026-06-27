@@ -2,13 +2,12 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    TF_CPP_MIN_LOG_LEVEL=3 \
-    TF_ENABLE_ONEDNN_OPTS=0 \
-    DEEPFACE_HOME=/weights
+    INSIGHTFACE_HOME=/weights
 
-# Dependencias de sistema que necesita OpenCV (usado por DeepFace).
+# Dependencias de sistema: OpenCV (libgl1/libglib2) + toolchain para compilar
+# insightface (extensiones C/Cython) durante el pip install.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 libglib2.0-0 \
+    libgl1 libglib2.0-0 build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /code

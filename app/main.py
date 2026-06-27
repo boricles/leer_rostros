@@ -34,12 +34,19 @@ def requiere_admin(authorization: str = Header(None, description="Bearer <token>
         raise HTTPException(401, "No autorizado. Inicia sesión en POST /admin/login.")
 
 CONTENT_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+# Umbrales calibrados a la distancia coseno de InsightFace buffalo_l (ArcFace).
 CONF_ALTA = 0.40
-CONF_MEDIA = 0.50
+CONF_MEDIA = 0.55
+LIMITE_MAX = 50  # tope de coincidencias que el front puede pedir
 
-# columnas que devuelve la búsqueda por estado (orden fijo)
-_SEL = ("person_id, estado, es_menor, nombre, apellido, edad, refugio, ubicacion, "
-        "telefono_responsable, telefono_contacto, descripcion, image_url")
+# columnas de dominio que devuelve la búsqueda (orden fijo, consumido por _fila_a_candidato)
+_COLS = ("person_id, estado, es_menor, nombre, apellido, edad, refugio, ubicacion, "
+         "telefono_responsable, telefono_contacto, descripcion, image_url")
+
+
+def _sel(alias: str) -> str:
+    """`_COLS` con un alias de tabla delante de cada columna (p. ej. 'p2.person_id, ...')."""
+    return ", ".join(f"{alias}.{c.strip()}" for c in _COLS.split(","))
 
 
 def nivel_confianza(d: float) -> str:
@@ -51,34 +58,42 @@ def nivel_confianza(d: float) -> str:
 
 
 def pct_coincidencia(d: float) -> int:
-    return max(0, min(100, round((1 - d / 1.2) * 100)))
+    # Sigmoide calibrada de buffalo_l (ver faces.distance_to_confidence).
+    return int(round(faces.distance_to_confidence(d)))
 
 
 def gen_codigo() -> str:
     return "REE-" + uuid.uuid4().hex[:8].upper()
 
 
-async def _embedding_de_fotos(files: list[UploadFile]):
-    """Devuelve (lista de (bytes, content_type), embedding de la 1ª foto válida)."""
-    fotos, embedding = [], None
+async def _procesar_fotos(files: list[UploadFile]):
+    """Por cada foto con rostro válido, extrae sus embeddings (base + rotaciones ±15°).
+
+    Devuelve `[(data, content_type, [(embedding, calidad), ...]), ...]`, omitiendo las
+    fotos sin rostro o de baja calidad."""
+    procesadas = []
     for f in files:
         data = await f.read()
         if not data:
             continue
         ct = f.content_type or "image/jpeg"
-        if embedding is None:
-            try:
-                embedding = faces.embedding_from_bytes(data)
-            except ValueError:
-                continue  # sin rostro: se omite
-        fotos.append((data, ct))
-    return fotos, embedding
+        try:
+            embs = faces.embeddings_from_bytes(data)
+        except ValueError:
+            continue  # sin rostro / baja calidad: se omite
+        procesadas.append((data, ct, embs))
+    return procesadas
 
 
-def _insertar_fotos(conn, person_id, datos: dict, fotos, embedding):
-    """Inserta una fila por foto (todas con el mismo person_id) y devuelve URLs."""
+def _embedding_consulta(procesadas):
+    """Embedding con el que se buscan coincidencias: el base de la primera foto válida."""
+    return procesadas[0][2][0][0] if procesadas else None
+
+
+def _insertar_fotos(conn, person_id, datos: dict, procesadas):
+    """Inserta una fila en `personas` por foto y sus vectores en `persona_embeddings`."""
     urls = []
-    for i, (data, ct) in enumerate(fotos):
+    for data, ct, embs in procesadas:
         ext = CONTENT_EXT.get(ct, "jpg")
         foto_id = uuid.uuid4()
         key = f"personas/{foto_id}.{ext}"
@@ -88,28 +103,55 @@ def _insertar_fotos(conn, person_id, datos: dict, fotos, embedding):
             INSERT INTO personas
               (id, person_id, estado, es_menor, nombre, apellido, edad, doc_tipo,
                doc_numero, telefono_contacto, refugio, telefono_responsable,
-               doc_responsable, descripcion, ubicacion, codigo, image_url, image_key, embedding)
+               doc_responsable, descripcion, ubicacion, codigo, image_url, image_key)
             VALUES (%(id)s, %(pid)s, %(estado)s, %(menor)s, %(nombre)s, %(apellido)s, %(edad)s,
                     %(doc_tipo)s, %(doc_numero)s, %(tel_contacto)s, %(refugio)s, %(tel_resp)s,
-                    %(doc_resp)s, %(descripcion)s, %(ubicacion)s, %(codigo)s, %(url)s, %(key)s, %(emb)s)
+                    %(doc_resp)s, %(descripcion)s, %(ubicacion)s, %(codigo)s, %(url)s, %(key)s)
             """,
-            {**datos, "id": foto_id, "pid": person_id, "url": url, "key": key, "emb": embedding},
+            {**datos, "id": foto_id, "pid": person_id, "url": url, "key": key},
         )
+        for emb, calidad in embs:
+            conn.execute(
+                "INSERT INTO persona_embeddings (foto_id, embedding, calidad_rostro) "
+                "VALUES (%s, %s, %s)",
+                (foto_id, emb, calidad),
+            )
         urls.append(url)
     return urls
 
 
-def _buscar_por_estado(conn, embedding, estado: str, limite: int):
+def _buscar_mejor_por_persona(conn, embedding, where: str, params: tuple, limite: int):
+    """Mejor coincidencia por persona: para cada `person_id` toma su embedding más cercano.
+
+    `where` filtra las filas de `personas` (estado/moderación); `params` son sus valores.
+    """
     return conn.execute(
         f"""
-        SELECT {_SEL}, distancia FROM (
-            SELECT DISTINCT ON (person_id) {_SEL}, embedding <=> %s AS distancia
-            FROM personas WHERE estado = %s AND moderacion = 'aprobada'
-            ORDER BY person_id, embedding <=> %s ASC
-        ) t ORDER BY distancia ASC LIMIT %s
+        SELECT {_sel('p2')}, b.distancia
+        FROM (
+            SELECT pe.foto_id, p.person_id,
+                   pe.embedding <=> %s AS distancia,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY p.person_id ORDER BY pe.embedding <=> %s ASC
+                   ) AS rn
+            FROM persona_embeddings pe
+            JOIN personas p ON p.id = pe.foto_id
+            {where}
+        ) b
+        JOIN personas p2 ON p2.id = b.foto_id
+        WHERE b.rn = 1
+        ORDER BY b.distancia ASC
+        LIMIT %s
         """,
-        (embedding, estado, embedding, limite),
+        (embedding, embedding, *params, limite),
     ).fetchall()
+
+
+def _buscar_por_estado(conn, embedding, estado: str, limite: int):
+    return _buscar_mejor_por_persona(
+        conn, embedding,
+        "WHERE p.estado = %s AND p.moderacion = 'aprobada'", (estado,), limite,
+    )
 
 
 def _fila_a_candidato(r) -> Candidato:
@@ -171,8 +213,10 @@ Un familiar sube la foto de a quién busca. Se registra como *buscada* y se devu
 | `doc_tipo` | texto | no | `V` |
 | `doc_numero` | texto | no* | `12345678` |
 | `telefono_contacto` | texto | no | `0412-1234567` |
+| `limite` | entero | no (def. `10`) | `20` |
 
 \\* Manda **al menos** `nombre` o `doc_numero` (validación).
+El front decide cuántas coincidencias recibir con **`limite`** (1-50).
 
 ### 🟢 Flujo RESCATISTA — `POST /encontrados`
 Quien encontró a alguien lo registra. Si un familiar ya lo buscaba, la respuesta trae
@@ -203,7 +247,7 @@ una **alerta** con el nombre y teléfono del familiar.
 ### Cómo interpretar la respuesta de búsqueda
 Cada candidato trae:
 - **`coincidencia`** (0-100): porcentaje de parecido para mostrar al usuario.
-- **`confianza`**: `alta` (<0.40, casi seguro) · `media` (0.40-0.50, revisar) · `baja`.
+- **`confianza`**: `alta` (<0.40, casi seguro) · `media` (0.40-0.55, revisar) · `baja`.
 - **`distancia`**: valor técnico (menor = más parecido; 0 = idéntico).
 - **`refugio`, `ubicacion`, `telefono`**: datos para el reencuentro (el botón *"Es mi familiar"*).
 """
@@ -238,16 +282,17 @@ async def registrar_busqueda(
     edad: str | None = Form(None), doc_tipo: str | None = Form(None),
     doc_numero: str | None = Form(None),
     telefono_contacto: str | None = Form(None, description="Teléfono del familiar para el reencuentro."),
+    limite: int = Form(10, description="Cuántas coincidencias devolver (1-50). El front lo decide."),
 ):
-    fotos, embedding = await _embedding_de_fotos(files)
+    procesadas = await _procesar_fotos(files)
     # --- Validaciones ---
-    if not fotos:
-        raise HTTPException(400, "Debes subir al menos una foto.")
-    if embedding is None:
+    if not procesadas:
         raise HTTPException(422, "No se detectó ningún rostro en la(s) foto(s).")
     if not (doc_numero or (nombre and nombre.strip())):
         raise HTTPException(422, "Indica al menos el nombre o el número de identificación.")
 
+    limite = max(1, min(LIMITE_MAX, limite))
+    embedding = _embedding_consulta(procesadas)
     person_id = uuid.uuid4()
     codigo = gen_codigo()
     datos = dict(estado="buscada", menor=False, nombre=nombre, apellido=apellido, edad=edad,
@@ -255,8 +300,8 @@ async def registrar_busqueda(
                  refugio=None, tel_resp=None, doc_resp=None, descripcion=None,
                  ubicacion=None, codigo=codigo)
     with get_pool().connection() as conn:
-        _insertar_fotos(conn, person_id, datos, fotos, embedding)
-        encontrados = _buscar_por_estado(conn, embedding, "encontrada", 25)
+        _insertar_fotos(conn, person_id, datos, procesadas)
+        encontrados = _buscar_por_estado(conn, embedding, "encontrada", limite)
         conn.commit()
 
     candidatos = [_fila_a_candidato(r) for r in encontrados]
@@ -276,11 +321,9 @@ async def registrar_encontrado(
     doc_responsable: str | None = Form(None, description="Identificación del responsable."),
     descripcion: str | None = Form(None, description="Descripción física básica."),
 ):
-    fotos, embedding = await _embedding_de_fotos(files)
+    procesadas = await _procesar_fotos(files)
     # --- Validaciones ---
-    if not fotos:
-        raise HTTPException(400, "Debes subir al menos una foto.")
-    if embedding is None:
+    if not procesadas:
         raise HTTPException(422, "No se detectó ningún rostro en la(s) foto(s).")
     if not refugio or not refugio.strip():
         raise HTTPException(422, "El refugio actual es obligatorio.")
@@ -289,6 +332,7 @@ async def registrar_encontrado(
     if es_menor and not (doc_responsable and doc_responsable.strip()):
         raise HTTPException(422, "Para un menor, la identificación del responsable es obligatoria.")
 
+    embedding = _embedding_consulta(procesadas)
     person_id = uuid.uuid4()
     codigo = gen_codigo()
     datos = dict(estado="encontrada", menor=es_menor,
@@ -298,7 +342,7 @@ async def registrar_encontrado(
                  refugio=refugio, tel_resp=telefono_responsable, doc_resp=doc_responsable,
                  descripcion=descripcion, ubicacion=ubicacion, codigo=codigo)
     with get_pool().connection() as conn:
-        _insertar_fotos(conn, person_id, datos, fotos, embedding)
+        _insertar_fotos(conn, person_id, datos, procesadas)
         buscados = _buscar_por_estado(conn, embedding, "buscada", 1)
         conn.commit()
 
@@ -319,28 +363,20 @@ async def registrar_encontrado(
           summary="Superadmin: comparar una foto contra TODA la base")
 async def buscar_admin(
     file: UploadFile = File(...),
-    limite: int = Form(25),
+    limite: int = Form(25, description="Cuántas coincidencias devolver (1-50)."),
     estado: str | None = Form(None, description="Filtrar por 'buscada' o 'encontrada' (vacío = todas)."),
 ):
     data = await file.read()
     try:
-        embedding = faces.embedding_from_bytes(data)
+        embedding, _ = faces.embedding_from_bytes(data)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    limite = max(1, min(LIMITE_MAX, limite))
     filtra = estado in ("buscada", "encontrada")
-    where = "WHERE estado = %s" if filtra else ""
-    params = (embedding, estado, embedding, limite) if filtra else (embedding, embedding, limite)
+    where = "WHERE p.estado = %s" if filtra else ""
+    params = (estado,) if filtra else ()
     with get_pool().connection() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT {_SEL}, distancia FROM (
-                SELECT DISTINCT ON (person_id) {_SEL}, embedding <=> %s AS distancia
-                FROM personas {where}
-                ORDER BY person_id, embedding <=> %s ASC
-            ) t ORDER BY distancia ASC LIMIT %s
-            """,
-            params,
-        ).fetchall()
+        rows = _buscar_mejor_por_persona(conn, embedding, where, params, limite)
     return [_fila_a_candidato(r) for r in rows]
 
 

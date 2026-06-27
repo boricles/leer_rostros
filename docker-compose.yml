@@ -1,5 +1,5 @@
 # Despliegue completo en un solo comando:  docker compose up -d --build
-# Levanta: Postgres+pgvector  +  API (FastAPI/DeepFace)  +  nginx (frontend + proxy).
+# Levanta: Postgres+pgvector  +  API (FastAPI/InsightFace)  +  nginx (frontend + proxy).
 # Solo necesitas un archivo .env (copia de .env.example) con las claves de Spaces.
 services:
   db:
@@ -28,7 +28,7 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - weights:/weights        # cachea los pesos de DeepFace entre reinicios
+      - weights:/weights        # cachea los pesos de InsightFace (buffalo_l) entre reinicios
     expose:
       - "8000"
 

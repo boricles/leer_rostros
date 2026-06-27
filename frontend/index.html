@@ -68,6 +68,8 @@
         <div><label>Tipo doc</label><select id="f_doctipo"><option value="">—</option><option>V</option><option>E</option><option>P</option><option>Otro</option></select></div>
         <div><label>N° identificación</label><input type="text" id="f_docnum"></div></div>
       <label>Tu teléfono de contacto</label><input type="tel" id="f_tel" placeholder="Para el reencuentro">
+      <label>¿Cuántas coincidencias mostrar?</label>
+      <select id="f_limite"><option value="5">5</option><option value="10" selected>10</option><option value="20">20</option><option value="30">30</option><option value="50">50</option></select>
       <button class="go" id="f_btn">Buscar coincidencias</button>
       <div id="f_res" class="dim" style="margin-top:12px"></div>
     </div>
@@ -117,6 +119,8 @@
       <img id="a_prev" class="preview" />
       <label>Filtrar</label>
       <select id="a_estado"><option value="">Todas</option><option value="buscada">Solo buscadas</option><option value="encontrada">Solo encontradas</option></select>
+      <label>¿Cuántos resultados?</label>
+      <select id="a_limite"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option></select>
       <button class="go" id="a_btn">Comparar</button>
       <div id="a_res" class="dim" style="margin-top:12px"></div>
     </div>
@@ -181,6 +185,7 @@ $("f_btn").addEventListener("click",async()=>{
   fd.append("nombre",$("f_nombre").value);fd.append("apellido",$("f_apellido").value);
   fd.append("edad",$("f_edad").value);fd.append("doc_tipo",$("f_doctipo").value);
   fd.append("doc_numero",$("f_docnum").value);fd.append("telefono_contacto",$("f_tel").value);
+  fd.append("limite",$("f_limite").value);
   try{const r=await fetch(API+"/buscados",{method:"POST",body:fd});const d=await r.json();
     if(!r.ok)throw new Error(d.detail||"Error");
     res.innerHTML=`<p class="dim">Búsqueda registrada (código <b>${d.codigo}</b>) · ${d.total} candidatos:</p>`+
@@ -212,7 +217,7 @@ $("a_btn").addEventListener("click",async()=>{
   const f=$("a_file").files[0],res=$("a_res");
   if(!f){res.innerHTML='Sube una foto.';return}
   const b=$("a_btn");b.disabled=true;res.textContent="Comparando contra la base...";
-  const fd=new FormData();fd.append("file",f);fd.append("limite","25");fd.append("estado",$("a_estado").value);
+  const fd=new FormData();fd.append("file",f);fd.append("limite",$("a_limite").value);fd.append("estado",$("a_estado").value);
   try{const r=await fetch(API+"/buscar",{method:"POST",body:fd,headers:H()});const d=await r.json();
     if(!r.ok)throw new Error(d.detail||"Error");
     res.innerHTML=`<p class="dim">${d.length} resultados:</p>`+d.map((c,i)=>`<div class="match">
