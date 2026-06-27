@@ -1,0 +1,71 @@
+name: Deploy a producción (symtechven.com)
+
+# Despliega automáticamente al Droplet cuando se integra a master.
+# El equipo trabaja en ramas y al hacer merge a master -> deploy automático.
+on:
+  push:
+    branches: [master]
+    paths:                      # solo redeploya si cambió algo que corre en el server
+      - "app/**"
+      - "requirements.txt"
+      - "frontend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:            # permite lanzarlo manualmente desde la pestaña Actions
+
+concurrency:
+  group: deploy-production      # nunca dos deploys a la vez
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar SSH (deploy key)
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Copiar código al server (rsync)
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no"
+          # Backend: app/ (sin __pycache__) — --delete deja el dir idéntico al repo.
+          rsync -az --delete --exclude="__pycache__" -e "$SSH" \
+            app/ "$SSH_USER@$SSH_HOST:/mnt/volumen1/rostros/app/"
+          rsync -az -e "$SSH" \
+            requirements.txt "$SSH_USER@$SSH_HOST:/mnt/volumen1/rostros/requirements.txt"
+          # Frontend (servido por nginx)
+          rsync -az -e "$SSH" \
+            frontend/index.html "$SSH_USER@$SSH_HOST:/var/www/rostros-front/index.html"
+
+      - name: Instalar deps y reiniciar servicio
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" 'bash -s' <<'EOF'
+          set -e
+          cd /mnt/volumen1/rostros
+          export TMPDIR=/mnt/volumen1/tmp PIP_CACHE_DIR=/mnt/volumen1/tmp/pipcache
+          ./venv/bin/pip install -q -r requirements.txt
+          pm2 restart rostros-api --update-env
+          pm2 save
+          EOF
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 36); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" https://symtechven.com/api/health || true)
+            if [ "$code" = "200" ]; then echo "✅ Servicio sano (HTTP 200)"; exit 0; fi
+            echo "esperando arranque... ($i) HTTP=$code"
+            sleep 5
+          done
+          echo "❌ Health check falló"; exit 1
