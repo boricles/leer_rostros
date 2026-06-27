@@ -92,7 +92,7 @@ def _buscar_por_estado(conn, embedding, estado: str, limite: int):
         f"""
         SELECT {_SEL}, distancia FROM (
             SELECT DISTINCT ON (person_id) {_SEL}, embedding <=> %s AS distancia
-            FROM personas WHERE estado = %s
+            FROM personas WHERE estado = %s AND moderacion = 'aprobada'
             ORDER BY person_id, embedding <=> %s ASC
         ) t ORDER BY distancia ASC LIMIT %s
         """,
@@ -131,9 +131,67 @@ tags = [
     {"name": "sistema", "description": "Estado del servicio."},
 ]
 
+DESCRIPTION = """
+API de **reconocimiento facial** para reunir personas desaparecidas con sus familias.
+
+Todas las peticiones de registro/búsqueda son **`multipart/form-data`** (porque suben
+foto). La foto va en el campo **`files`** (puedes mandar varias del mismo registro).
+
+---
+
+### 🟣 Flujo FAMILIAR — `POST /buscados`
+Un familiar sube la foto de a quién busca. Se registra como *buscada* y se devuelve la
+**lista de personas ya encontradas** ordenadas por parecido.
+
+| Campo | Tipo | Obligatorio | Ejemplo |
+|---|---|---|---|
+| `files` | archivo(s) | **Sí** (con rostro) | foto.jpg |
+| `nombre` | texto | no* | `María` |
+| `apellido` | texto | no | `Pérez` |
+| `edad` | texto | no | `8` |
+| `doc_tipo` | texto | no | `V` |
+| `doc_numero` | texto | no* | `12345678` |
+| `telefono_contacto` | texto | no | `0412-1234567` |
+
+\\* Manda **al menos** `nombre` o `doc_numero` (validación).
+
+### 🟢 Flujo RESCATISTA — `POST /encontrados`
+Quien encontró a alguien lo registra. Si un familiar ya lo buscaba, la respuesta trae
+una **alerta** con el nombre y teléfono del familiar.
+
+| Campo | Tipo | Obligatorio | Ejemplo |
+|---|---|---|---|
+| `files` | archivo(s) | **Sí** (con rostro) | foto.jpg |
+| `es_menor` | bool | no (def. `false`) | `true` |
+| `nombre` | texto | no (se ignora si `es_menor`) | `Juan` |
+| `apellido` | texto | no (se ignora si `es_menor`) | `Gómez` |
+| `doc_tipo` / `doc_numero` | texto | no | `V` / `87654321` |
+| `refugio` | texto | **Sí** | `Refugio Central, Caracas` |
+| `ubicacion` | texto | no | `Plaza Bolívar` |
+| `telefono_responsable` | texto | **Sí** | `0414-9999999` |
+| `doc_responsable` | texto | **Sí si `es_menor`** | `V-11111111` |
+| `descripcion` | texto | no | `cabello castaño, 1.20 m` |
+
+> **Protocolo de menor:** si `es_menor=true`, el `nombre`/`apellido` NO se guardan y en
+> las búsquedas aparece como *"Menor protegido"*.
+
+### 🛡️ SUPERADMIN
+- `POST /buscar` — comparar una foto contra TODA la base (campo `file`, `limite`, `estado`).
+- `GET /admin/personas` — listar registros.
+
+---
+
+### Cómo interpretar la respuesta de búsqueda
+Cada candidato trae:
+- **`coincidencia`** (0-100): porcentaje de parecido para mostrar al usuario.
+- **`confianza`**: `alta` (<0.40, casi seguro) · `media` (0.40-0.50, revisar) · `baja`.
+- **`distancia`**: valor técnico (menor = más parecido; 0 = idéntico).
+- **`refugio`, `ubicacion`, `telefono`**: datos para el reencuentro (el botón *"Es mi familiar"*).
+"""
+
 app = FastAPI(
     title="Reencuentros — Reconocimiento facial",
-    description="Reunir personas desaparecidas con sus familias mediante reconocimiento facial.",
+    description=DESCRIPTION,
     version="2.0.0", openapi_tags=tags, lifespan=lifespan,
 )
 
@@ -258,16 +316,24 @@ async def buscar_admin(
 
 @app.get("/admin/personas", response_model=list[PersonaAdmin], tags=["admin"],
          summary="Superadmin: listar registros")
-def listar(limite: int = 100, estado: str | None = None):
-    where = "WHERE estado = %s" if estado in ("buscada", "encontrada") else ""
-    args = ([estado] if where else []) + [limite]
+def listar(limite: int = 100, estado: str | None = None, moderacion: str | None = None):
+    """Lista registros. Filtra por estado y/o moderación (para revisar/aprobar)."""
+    conds, args = [], []
+    if estado in ("buscada", "encontrada"):
+        conds.append("estado = %s")
+        args.append(estado)
+    if moderacion in ("aprobada", "rechazada", "pendiente"):
+        conds.append("moderacion = %s")
+        args.append(moderacion)
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    args.append(limite)
     with get_pool().connection() as conn:
         rows = conn.execute(
             f"""
             SELECT person_id, max(estado), bool_or(es_menor), max(nombre), max(apellido),
                    max(edad), max(doc_numero), max(refugio), max(ubicacion),
                    coalesce(max(telefono_responsable), max(telefono_contacto)),
-                   max(codigo), array_agg(image_url), min(created_at)
+                   max(codigo), max(moderacion), array_agg(image_url), min(created_at)
             FROM personas {where}
             GROUP BY person_id ORDER BY min(created_at) DESC LIMIT %s
             """,
@@ -277,7 +343,43 @@ def listar(limite: int = 100, estado: str | None = None):
         PersonaAdmin(
             person_id=str(r[0]), estado=r[1], es_menor=bool(r[2]), nombre=r[3], apellido=r[4],
             edad=r[5], doc=r[6], refugio=r[7], ubicacion=r[8], telefono=r[9], codigo=r[10],
-            fotos=list(r[11]), created_at=r[12],
+            moderacion=r[11], fotos=list(r[12]), created_at=r[13],
         )
         for r in rows
     ]
+
+
+@app.patch("/admin/personas/{person_id}/moderacion", tags=["admin"],
+           summary="Aprobar / rechazar una publicación")
+def moderar(person_id: str, valor: str):
+    """`valor` = `aprobada` | `rechazada` | `pendiente`. Las rechazadas no aparecen en búsquedas."""
+    if valor not in ("aprobada", "rechazada", "pendiente"):
+        raise HTTPException(400, "valor debe ser 'aprobada', 'rechazada' o 'pendiente'")
+    with get_pool().connection() as conn:
+        n = conn.execute(
+            "UPDATE personas SET moderacion = %s WHERE person_id = %s", (valor, person_id)
+        ).rowcount
+        conn.commit()
+    if not n:
+        raise HTTPException(404, "No existe esa persona")
+    return {"person_id": person_id, "moderacion": valor, "fotos_actualizadas": n}
+
+
+@app.delete("/admin/personas/{person_id}", tags=["admin"],
+            summary="Eliminar una publicación (contenido indebido)")
+def eliminar(person_id: str):
+    """Borra la persona, sus fotos del almacenamiento y sus filas de la BD."""
+    with get_pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT image_key FROM personas WHERE person_id = %s", (person_id,)
+        ).fetchall()
+        if not rows:
+            raise HTTPException(404, "No existe esa persona")
+        for (key,) in rows:
+            try:
+                storage.delete_image(key)
+            except Exception:
+                pass
+        conn.execute("DELETE FROM personas WHERE person_id = %s", (person_id,))
+        conn.commit()
+    return {"person_id": person_id, "eliminada": True, "fotos": len(rows)}

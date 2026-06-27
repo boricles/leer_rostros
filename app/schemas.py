@@ -63,5 +63,6 @@ class PersonaAdmin(BaseModel):
     ubicacion: str | None = None
     telefono: str | None = None
     codigo: str | None = None
+    moderacion: str = "aprobada"
     fotos: list[str]
     created_at: datetime

@@ -112,6 +112,13 @@
       <button class="go" id="a_btn">Comparar</button>
       <div id="a_res" class="dim" style="margin-top:12px"></div>
     </div>
+    <div class="card">
+      <h2>📋 Moderar publicaciones</h2>
+      <p class="hint">Revisa, aprueba/rechaza o elimina contenido indebido. Las rechazadas no aparecen en las búsquedas.</p>
+      <select id="m_filtro"><option value="">Todas</option><option value="aprobada">Aprobadas</option><option value="rechazada">Rechazadas</option><option value="pendiente">Pendientes</option></select>
+      <button class="go" id="m_btn">Cargar publicaciones</button>
+      <div id="m_res" style="margin-top:12px"></div>
+    </div>
   </section>
 </div>
 
@@ -195,6 +202,28 @@ $("a_btn").addEventListener("click",async()=>{
       <div class="dim">Refugio: ${c.refugio||'—'} · 📞 ${c.telefono||'—'} · dist ${c.distancia}</div></div></div>`).join("");
   }catch(e){res.innerHTML='<span class="badge no">Error</span> '+e.message}finally{b.disabled=false}
 });
+
+async function cargarModeracion(){
+  const res=$("m_res");res.textContent="Cargando...";
+  const q=$("m_filtro").value?("?moderacion="+$("m_filtro").value):"";
+  const d=await (await fetch(API+"/admin/personas"+q)).json();
+  if(!d.length){res.innerHTML='<span class="empty">Sin publicaciones.</span>';return}
+  res.innerHTML=d.map(p=>{
+    const t=p.es_menor?'<i>Menor protegido</i>':((p.nombre||'')+' '+(p.apellido||'')).trim()||'<i>sin nombre</i>';
+    const mb=p.moderacion==='aprobada'?'<span class="badge ok">aprobada</span>':p.moderacion==='rechazada'?'<span class="badge no">rechazada</span>':'<span class="badge media">pendiente</span>';
+    return `<div class="match"><img src="${p.fotos[0]}" onerror="this.style.opacity=.3">
+      <div style="flex:1"><div>${t} ${mb} <span class="dim">[${p.estado}]</span></div>
+      <div class="dim">Refugio: ${p.refugio||'—'} · ${p.codigo||''}</div>
+      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="esmifam" onclick="moderar('${p.person_id}','aprobada')">✓ Aprobar</button>
+        <button class="esmifam" style="background:#f1c40f" onclick="moderar('${p.person_id}','rechazada')">⊘ Rechazar</button>
+        <button class="esmifam" style="background:var(--bad);color:#fff" onclick="eliminar('${p.person_id}')">🗑 Eliminar</button>
+      </div></div></div>`;
+  }).join("");
+}
+async function moderar(id,valor){await fetch(API+"/admin/personas/"+id+"/moderacion?valor="+valor,{method:"PATCH"});cargarModeracion();}
+async function eliminar(id){if(!confirm("¿Eliminar esta publicación?"))return;await fetch(API+"/admin/personas/"+id,{method:"DELETE"});cargarModeracion();}
+$("m_btn").addEventListener("click",cargarModeracion);
 </script>
 </body>
 </html>

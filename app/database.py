@@ -31,6 +31,8 @@ _EXTRA_COLS = [
     ("descripcion", "TEXT"),
     ("ubicacion", "TEXT"),
     ("codigo", "TEXT"),
+    # Moderación: 'aprobada' (visible) | 'rechazada' (oculta) | 'pendiente'.
+    ("moderacion", "TEXT NOT NULL DEFAULT 'aprobada'"),
 ]
 
 

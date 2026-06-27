@@ -1,0 +1,118 @@
+# API — Guía para el frontend
+
+Base URL: `https://symtechven.com/api` (o `http://IP/api` en el VPS).
+Swagger interactivo: **`/api/docs`** · ReDoc: `/api/redoc`.
+
+Todas las peticiones que suben foto son **`multipart/form-data`**. La foto va en
+**`files`** (puedes mandar varias del mismo registro). Errores: HTTP `422` (validación)
+o `400`, con `{"detail": "mensaje"}`.
+
+---
+
+## 🟣 FAMILIAR — `POST /buscados`
+Registra una búsqueda y devuelve los encontrados más parecidos.
+
+**Campos (form-data):** `files`* · `nombre` · `apellido` · `edad` · `doc_tipo` · `doc_numero` · `telefono_contacto`
+(\\*obligatorio: foto con rostro. Validación: manda al menos `nombre` o `doc_numero`.)
+
+```js
+const fd = new FormData();
+fd.append("files", file);                 // File del <input type=file>
+fd.append("nombre", "María");
+fd.append("doc_numero", "12345678");
+fd.append("telefono_contacto", "0412-1234567");
+const r = await fetch("/api/buscados", { method: "POST", body: fd });
+const data = await r.json();
+```
+**Respuesta 201:**
+```json
+{
+  "codigo": "REE-CC66DA69",
+  "total": 2,
+  "coincidencias": [
+    {
+      "person_id": "b16bf3ec-...", "estado": "encontrada", "es_menor": false,
+      "nombre": "Juan", "apellido": "Gómez", "edad": null,
+      "refugio": "Refugio Central", "ubicacion": "Plaza Bolívar",
+      "telefono": "0414-9999999", "descripcion": null,
+      "image_url": "/fotos/personas/xxx.jpg",
+      "distancia": 0.395, "coincidencia": 67, "confianza": "alta"
+    }
+  ]
+}
+```
+> Muestra `coincidencia`% y `confianza`. Al pulsar **"Es mi familiar"** revela
+> `ubicacion` y `telefono`. Si `es_menor=true`, `nombre`/`apellido` vienen `null`
+> (muéstralo como *"Menor protegido"*).
+
+---
+
+## 🟢 RESCATISTA — `POST /encontrados`
+Registra a la persona encontrada; avisa si un familiar ya la buscaba.
+
+**Campos:** `files`* · `es_menor` (bool) · `nombre` · `apellido` · `doc_tipo` · `doc_numero` ·
+`refugio`* · `ubicacion` · `telefono_responsable`* · `doc_responsable` (*obligatorio si menor*) · `descripcion`
+
+```js
+const fd = new FormData();
+fd.append("files", file);
+fd.append("es_menor", true);              // oculta nombre del menor
+fd.append("refugio", "Refugio Norte");
+fd.append("telefono_responsable", "0426-5555555");
+fd.append("doc_responsable", "V-11111111"); // obligatorio si es_menor
+fd.append("descripcion", "cabello castaño");
+await fetch("/api/encontrados", { method: "POST", body: fd });
+```
+**Respuesta 201:**
+```json
+{
+  "codigo": "REE-D38D8CF1",
+  "person_id": "...",
+  "alerta": {
+    "person_id": "...", "familiar_nombre": "María", "familiar_telefono": "0412-1234567",
+    "image_url": "/fotos/personas/yyy.jpg", "coincidencia": 67, "confianza": "alta"
+  }
+}
+```
+> Si `alerta` es `null`, nadie lo buscaba aún. Si trae datos, **muéstralos** (un
+> familiar ya busca a esta persona, con su teléfono).
+
+---
+
+## 🛡️ SUPERADMIN
+
+### Comparar foto contra toda la base — `POST /buscar`
+**Campos:** `file`* · `limite` (def. 25) · `estado` (`buscada`|`encontrada`|vacío).
+Devuelve un array de candidatos (mismo formato que `coincidencias`).
+
+### Listar / moderar — `GET /admin/personas`
+Query: `limite`, `estado`, `moderacion` (`aprobada`|`rechazada`|`pendiente`).
+```json
+[{ "person_id":"...", "estado":"encontrada", "es_menor":false, "nombre":"Juan",
+   "refugio":"Refugio Central", "telefono":"0414-9999999", "codigo":"REE-...",
+   "moderacion":"aprobada", "fotos":["/fotos/..."], "created_at":"2026-06-27T..." }]
+```
+
+### Aprobar / rechazar — `PATCH /admin/personas/{person_id}/moderacion?valor=aprobada`
+`valor` = `aprobada` | `rechazada` | `pendiente`. Las **rechazadas no aparecen** en búsquedas.
+```js
+await fetch(`/api/admin/personas/${id}/moderacion?valor=rechazada`, { method: "PATCH" });
+```
+
+### Eliminar (contenido indebido) — `DELETE /admin/personas/{person_id}`
+Borra a la persona, sus fotos y sus filas.
+```js
+await fetch(`/api/admin/personas/${id}`, { method: "DELETE" });
+```
+
+---
+
+## Referencia de campos de respuesta
+| Campo | Significado |
+|---|---|
+| `coincidencia` | % de parecido (0-100) para mostrar |
+| `confianza` | `alta` (<0.40) · `media` (0.40-0.50, revisar) · `baja` |
+| `distancia` | técnico: menor = más parecido (0 = idéntico) |
+| `es_menor` | si `true`, `nombre`/`apellido` van `null` → mostrar "Menor protegido" |
+| `moderacion` | `aprobada` (visible) · `rechazada` (oculta) · `pendiente` |
+| `image_url` | ruta de la foto (`/fotos/...` local o URL de Spaces) |
