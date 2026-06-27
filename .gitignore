@@ -21,3 +21,6 @@ imagen2.jpeg
 
 # Repo anidado duplicado accidental
 leer_rostros/
+# Local Pi runtime state
+.atl/
+.pi/

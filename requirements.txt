@@ -16,4 +16,10 @@ onnxruntime
 passlib[bcrypt]<1.8
 bcrypt<4.1
 PyJWT>=2.8,<3
+
+# --- Testing (dev) ---
+pytest>=7.0
+httpx>=0.24
+pytest-asyncio>=0.21
+pytest-cov>=4.0
 requests
