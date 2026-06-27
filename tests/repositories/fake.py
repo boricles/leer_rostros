@@ -30,7 +30,9 @@ class FakePersonaRepository:
     def __init__(self, policy: MatchingPolicy | None = None):
         self._policy = policy or MatchingPolicy(threshold=0.55)
         self._personas: list[PersonaBase] = []
-        self._embeddings: dict[str, list[bytes]] = {}  # person_id -> list of fake embeddings
+        self._embeddings: dict[
+            str, list[bytes]
+        ] = {}  # person_id -> list of fake embeddings
         self._deleted: list[str] = []
 
     def add(
@@ -43,7 +45,7 @@ class FakePersonaRepository:
         persona.photos = []
         for _data, ct, _embs in procesadas:
             foto_id = uuid.uuid4()
-            ext = ct.split('/')[-1] if '/' in ct else 'jpg'
+            ext = ct.split("/")[-1] if "/" in ct else "jpg"
             url = f"https://fake-cdn.example.com/personas/{foto_id}.{ext}"
             persona.photos.append(url)
         self._personas.append(persona)
@@ -59,8 +61,10 @@ class FakePersonaRepository:
         can be tested predictably.
         """
         candidates = [
-            p for p in self._personas
-            if p.moderacion == "aprobada" and (estado is None or p.estado.value == estado)
+            p
+            for p in self._personas
+            if p.moderacion == "aprobada"
+            and (estado is None or p.estado.value == estado)
         ]
         results = []
         for i, persona in enumerate(candidates[:limit]):
@@ -73,8 +77,7 @@ class FakePersonaRepository:
     ) -> list[dict]:
         """Same as search_by_estado but no moderacion filter."""
         candidates = [
-            p for p in self._personas
-            if estado is None or p.estado.value == estado
+            p for p in self._personas if estado is None or p.estado.value == estado
         ]
         results = []
         for i, persona in enumerate(candidates[:limit]):
@@ -111,9 +114,7 @@ class FakePersonaRepository:
     def delete(self, person_id: str) -> int:
         """Delete personas by person_id. Returns number of photos deleted."""
         original_count = len(self._personas)
-        self._personas = [
-            p for p in self._personas if str(p.person_id) != person_id
-        ]
+        self._personas = [p for p in self._personas if str(p.person_id) != person_id]
         deleted_count = original_count - len(self._personas)
         if deleted_count > 0:
             self._deleted.append(person_id)

@@ -20,7 +20,9 @@ def _mock_faces_module(monkeypatch):
         mock_faces = types.ModuleType("app.faces")
         monkeypatch.setitem(sys.modules, "app.faces", mock_faces)
     faces_mod = sys.modules["app.faces"]
-    monkeypatch.setattr(faces_mod, "distance_to_confidence", lambda d: 50.0, raising=False)
+    monkeypatch.setattr(
+        faces_mod, "distance_to_confidence", lambda d: 50.0, raising=False
+    )
 
 
 @pytest.fixture

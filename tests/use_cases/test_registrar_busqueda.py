@@ -21,7 +21,9 @@ def _mock_faces_module(monkeypatch):
         mock_faces = types.ModuleType("app.faces")
         monkeypatch.setitem(sys.modules, "app.faces", mock_faces)
     faces_mod = sys.modules["app.faces"]
-    monkeypatch.setattr(faces_mod, "distance_to_confidence", lambda d: 50.0, raising=False)
+    monkeypatch.setattr(
+        faces_mod, "distance_to_confidence", lambda d: 50.0, raising=False
+    )
 
 
 @pytest.fixture
@@ -49,6 +51,7 @@ class TestRegistrarBusquedaHappyPath:
         """Name provided, returns ResultadoBusqueda with matches."""
         # Pre-seed repo with an "encontrada" persona that will match
         from app.domain.persona import Estado, PersonaBase
+
         found = PersonaBase(
             person_id=uuid4(),
             estado=Estado.ENCONTRADA,
@@ -170,7 +173,10 @@ class TestRegistrarBusquedaValidation:
                 telefono_contacto=None,
                 limite=10,
             )
-        assert "nombre" in str(exc_info.value).lower() or "identificación" in str(exc_info.value).lower()
+        assert (
+            "nombre" in str(exc_info.value).lower()
+            or "identificación" in str(exc_info.value).lower()
+        )
 
 
 class TestRegistrarBusquedaLimiteClamping:

@@ -19,7 +19,9 @@ def _mock_faces_module(monkeypatch):
         mock_faces = types.ModuleType("app.faces")
         monkeypatch.setitem(sys.modules, "app.faces", mock_faces)
     faces_mod = sys.modules["app.faces"]
-    monkeypatch.setattr(faces_mod, "distance_to_confidence", lambda d: 50.0, raising=False)
+    monkeypatch.setattr(
+        faces_mod, "distance_to_confidence", lambda d: 50.0, raising=False
+    )
 
 
 @pytest.fixture
@@ -53,7 +55,9 @@ class TestEliminarPersonaHappyPath:
 
         assert result["person_id"] == str(persona.person_id)
         assert result["eliminada"]
-        assert result["fotos"] == 1  # fake_repo.delete returns count of personas deleted
+        assert (
+            result["fotos"] == 1
+        )  # fake_repo.delete returns count of personas deleted
 
     def test_persona_removed_from_fake(self, use_case, fake_repo):
         """After delete, persona no longer in repo."""

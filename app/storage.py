@@ -16,6 +16,7 @@ def _client():
     # instalar boto3 solo para importar este módulo.
     import boto3
     from botocore.client import Config
+
     s = get_settings()
     return boto3.client(
         "s3",
@@ -32,8 +33,11 @@ def upload_image(data: bytes, key: str, content_type: str = "image/jpeg") -> str
     s = get_settings()
     if s.usa_spaces:
         _client().put_object(
-            Bucket=s.spaces_bucket, Key=key, Body=data,
-            ContentType=content_type, ACL="public-read",
+            Bucket=s.spaces_bucket,
+            Key=key,
+            Body=data,
+            ContentType=content_type,
+            ACL="public-read",
         )
         return f"{s.public_base_url}/{key}"
 
