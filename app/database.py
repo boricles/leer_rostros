@@ -37,6 +37,7 @@ _EXTRA_COLS = [
     ("descripcion", "TEXT"),
     ("ubicacion", "TEXT"),
     ("codigo", "TEXT"),
+    ("encontrado_por", "TEXT"),  # nombre de quien encontró a la persona
     # Moderación: 'aprobada' (visible) | 'rechazada' (oculta) | 'pendiente'.
     ("moderacion", "TEXT NOT NULL DEFAULT 'aprobada'"),
 ]

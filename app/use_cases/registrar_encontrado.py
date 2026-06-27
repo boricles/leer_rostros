@@ -30,6 +30,7 @@ class RegistrarEncontrado:
         refugio: str | None,
         ubicacion: str | None,
         telefono_responsable: str | None,
+        encontrado_por: str | None = None,
         doc_responsable: str | None,
         descripcion: str | None,
     ) -> ResultadoRegistro:
@@ -74,6 +75,7 @@ class RegistrarEncontrado:
             doc_numero=doc_numero,
             refugio=refugio,
             ubicacion=ubicacion,
+            encontrado_por=encontrado_por,
             telefono_responsable=telefono_responsable,
             doc_responsable=doc_responsable,
             descripcion=descripcion,

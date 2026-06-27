@@ -127,8 +127,8 @@ class TestListarPersonasAdminHappyPath:
         results = use_case.execute(limite=10, estado=None, moderacion=None)
 
         assert len(results) == 1
-        assert results[0].nombre is None
-        assert results[0].apellido is None
+        assert results[0].nombre == "Pedrito"   # menores ya NO se enmascaran
+        assert results[0].apellido == "López"
 
     def test_respects_limite(self, use_case, fake_repo):
         """Returns at most `limit` results."""

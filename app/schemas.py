@@ -19,12 +19,13 @@ class Candidato(BaseModel):
     person_id: str
     estado: str = Field(..., description="'buscada' o 'encontrada'.")
     es_menor: bool = False
-    nombre: str | None = Field(None, description="Oculto si es menor (protocolo de protección).")
+    nombre: str | None = Field(None, description="Nombre (también en menores). null si no se registró → el front muestra 'Sin nombre registrado'.")
     apellido: str | None = None
     edad: str | None = None
     refugio: str | None = Field(None, description="Refugio donde se encuentra (si fue encontrada).")
     ubicacion: str | None = Field(None, description="Última ubicación conocida / dónde se encontró.")
     telefono: str | None = Field(None, description="Teléfono de contacto para el reencuentro.")
+    encontrado_por: str | None = Field(None, description="Nombre de quien encontró a la persona.")
     descripcion: str | None = None
     image_url: str
     distancia: float = Field(..., description="Distancia coseno (menor = más parecido).")

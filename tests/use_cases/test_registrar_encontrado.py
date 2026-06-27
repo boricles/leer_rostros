@@ -133,7 +133,7 @@ class TestRegistrarEncontradoHappyPath:
         )
 
         assert result.alerta is not None
-        assert result.alerta.familiar_nombre is None  # Masked
+        assert result.alerta.familiar_nombre == "Pedrito"  # menores ya NO se enmascaran
 
     def test_alerta_non_minor_preserves_nombre(self, use_case, fake_repo):
         """Match is adult, familiar_nombre preserved."""

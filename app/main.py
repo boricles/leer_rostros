@@ -237,12 +237,15 @@ una **alerta** con el nombre y teléfono del familiar.
 | `doc_tipo` / `doc_numero` | texto | no | `V` / `87654321` |
 | `refugio` | texto | **Sí** | `Refugio Central, Caracas` |
 | `ubicacion` | texto | no | `Plaza Bolívar` |
+| `encontrado_por` | texto | no | `María (vecina)` |
 | `telefono_responsable` | texto | **Sí** | `0414-9999999` |
 | `doc_responsable` | texto | **Sí si `es_menor`** | `V-11111111` |
 | `descripcion` | texto | no | `cabello castaño, 1.20 m` |
 
-> **Protocolo de menor:** si `es_menor=true`, el `nombre`/`apellido` se guardan en la BD
-> pero se ocultan en las respuestas de la API (protección de menores).
+> **Menores:** `es_menor=true` es solo una **etiqueta** (para marcar al niño en la UI). El
+> `nombre`/`apellido` **SÍ se guardan y se muestran** si se conocen; si no, llegan como
+> `null` y el front muestra *"Sin nombre registrado"*. Cada encontrado expone además
+> **`encontrado_por`** (quién lo halló) y su **teléfono** de contacto.
 
 ### 🚩 REPORTES (público)
 - `POST /reportes/falla` — reportar un bug/falla de la página (JSON: `descripcion`, `url?`, `contacto?`).
@@ -389,16 +392,19 @@ async def registrar_encontrado(
         ..., description="Foto(s) del rostro de la persona encontrada (obligatorio)."
     ),
     es_menor: bool = Form(
-        False, description="Activar si es menor de edad (oculta datos sensibles)."
+        False, description="Marcar si es menor (etiqueta; el nombre SÍ se guarda/muestra)."
     ),
-    nombre: str | None = Form(None),
-    apellido: str | None = Form(None),
+    nombre: str | None = Form(None, description="Nombre del encontrado (null si no se conoce)."),
+    apellido: str | None = Form(None, description="Apellido del encontrado (null si no se conoce)."),
     doc_tipo: str | None = Form(None),
     doc_numero: str | None = Form(None),
     refugio: str | None = Form(None, description="Refugio donde se encuentra."),
     ubicacion: str | None = Form(None, description="Dónde se encontró a la persona."),
+    encontrado_por: str | None = Form(
+        None, description="Nombre de quien encontró a la persona (se muestra al familiar)."
+    ),
     telefono_responsable: str | None = Form(
-        None, description="Teléfono del responsable."
+        None, description="Teléfono de quien lo encontró / responsable."
     ),
     doc_responsable: str | None = Form(
         None, description="Identificación del responsable."
@@ -417,6 +423,7 @@ async def registrar_encontrado(
         doc_numero=doc_numero,
         refugio=refugio,
         ubicacion=ubicacion,
+        encontrado_por=encontrado_por,
         telefono_responsable=telefono_responsable,
         doc_responsable=doc_responsable,
         descripcion=descripcion,

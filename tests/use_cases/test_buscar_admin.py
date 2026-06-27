@@ -99,8 +99,8 @@ class TestBuscarAdminHappyPath:
         results = use_case.execute(embedding=b"fake", estado=None, limite=10)
 
         assert len(results) == 1
-        assert results[0].nombre is None
-        assert results[0].apellido is None
+        assert results[0].nombre == "Pedrito"   # menores ya NO se enmascaran
+        assert results[0].apellido == "López"
 
     def test_no_moderacion_filter(self, use_case, fake_repo):
         """Admin search returns all moderacion statuses."""

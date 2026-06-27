@@ -147,7 +147,7 @@ function imgSrc(v){const s=String(v??"").trim();return s.startsWith("/fotos/")||
 function conf(v){return v==="alta"||v==="media"?v:"baja"}
 function num(v,fallback=0){const n=Number(v);return Number.isFinite(n)?n:fallback}
 function uuid(v){const s=String(v??"");return /^[0-9a-fA-F-]{36}$/.test(s)?s:""}
-function personTitle(p,label="Menor protegido"){if(p.es_menor)return `<i>${esc(label)}</i>`;const s=((p.nombre||"")+" "+(p.apellido||"")).trim();return s?esc(s):"<i>sin nombre</i>"}
+function personTitle(p){const s=((p.nombre||"")+" "+(p.apellido||"")).trim();const t=s?esc(s):"<i>Sin nombre registrado</i>";return p.es_menor?t+' <span class="badge media">menor</span>':t}
 async function adminLogin(){
   const res=$("adm_loginres");res.textContent="Entrando...";
   try{const r=await fetch(API+"/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},

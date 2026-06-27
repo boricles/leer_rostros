@@ -240,8 +240,8 @@ class TestRegistrarBusquedaPrivacy:
 
         assert result.total == 1
         candidato = result.coincidencias[0]
-        assert candidato.nombre is None
-        assert candidato.apellido is None
+        assert candidato.nombre == "Juan"   # menores ya NO se enmascaran
+        assert candidato.apellido == "Pérez"
 
     def test_adult_names_preserved(self, use_case, fake_repo):
         """Adult candidates have real names intact."""

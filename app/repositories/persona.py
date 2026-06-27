@@ -18,7 +18,7 @@ def _cols_with_alias(alias: str) -> str:
     """Column list with table alias prefix for search queries."""
     cols = (
         "person_id, estado, es_menor, nombre, apellido, edad, refugio, ubicacion, "
-        "telefono_responsable, telefono_contacto, descripcion, image_url"
+        "telefono_responsable, telefono_contacto, descripcion, encontrado_por, image_url"
     )
     return ", ".join(f"{alias}.{c.strip()}" for c in cols.split(","))
 
@@ -33,10 +33,12 @@ class PersonaRepository:
         INSERT INTO personas
           (id, person_id, estado, es_menor, nombre, apellido, edad, doc_tipo,
            doc_numero, telefono_contacto, refugio, telefono_responsable,
-           doc_responsable, descripcion, ubicacion, codigo, image_url, image_key)
+           doc_responsable, descripcion, ubicacion, codigo, encontrado_por,
+           image_url, image_key)
         VALUES (%(id)s, %(pid)s, %(estado)s, %(menor)s, %(nombre)s, %(apellido)s, %(edad)s,
                 %(doc_tipo)s, %(doc_numero)s, %(tel_contacto)s, %(refugio)s, %(tel_resp)s,
-                %(doc_resp)s, %(descripcion)s, %(ubicacion)s, %(codigo)s, %(url)s, %(key)s)
+                %(doc_resp)s, %(descripcion)s, %(ubicacion)s, %(codigo)s, %(encontrado_por)s,
+                %(url)s, %(key)s)
     """
 
     # INSERT into persona_embeddings (one row per embedding)
@@ -153,6 +155,7 @@ class PersonaRepository:
                     "descripcion": persona.descripcion,
                     "ubicacion": persona.ubicacion,
                     "codigo": persona.codigo,
+                    "encontrado_por": persona.encontrado_por,
                     # SQL-specific fields
                     "id": foto_id,
                     "pid": person_id,
@@ -269,6 +272,7 @@ class PersonaRepository:
             tel_resp,
             tel_contacto,
             descripcion,
+            encontrado_por,
             image_url,
             distancia,
         ) = row
@@ -283,6 +287,7 @@ class PersonaRepository:
             "refugio": refugio,
             "ubicacion": ubicacion or refugio,
             "telefono": tel_resp or tel_contacto,
+            "encontrado_por": encontrado_por,
             "descripcion": descripcion,
             "image_url": image_url,
             "distancia": round(d, 4),
