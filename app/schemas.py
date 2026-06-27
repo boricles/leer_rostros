@@ -49,6 +49,7 @@ class AlertaFamiliar(BaseModel):
     image_url: str
     coincidencia: int
     confianza: str
+    es_menor: bool = False  # Used by MenoresPrivacy to mask familiar_nombre for minors
 
 
 class ResultadoRegistro(BaseModel):
