@@ -7,6 +7,7 @@ IMPORTANT: This is test-only infrastructure. Do NOT import from app/ code.
 """
 
 import uuid
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -155,5 +156,5 @@ class FakePersonaRepository:
             "codigo": persona.codigo,
             "moderacion": persona.moderacion,
             "fotos": persona.photos,
-            "created_at": None,  # Not tracked in fake
+            "created_at": datetime.now(),
         }
