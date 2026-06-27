@@ -28,6 +28,11 @@ class Candidato(BaseModel):
     encontrado_por: str | None = Field(None, description="Nombre de quien encontró a la persona.")
     descripcion: str | None = None
     image_url: str
+    contenido_sensible: bool = Field(
+        False,
+        description="true si la moderación automática detectó contenido sensible "
+        "(gore/violencia). El front debe difuminar la foto y avisar al usuario.",
+    )
     distancia: float = Field(..., description="Distancia coseno (menor = más parecido).")
     coincidencia: int = Field(..., description="Porcentaje de coincidencia (0-100).")
     confianza: str = Field(..., description="'alta' | 'media' | 'baja'.")
@@ -59,6 +64,11 @@ class ResultadoRegistro(BaseModel):
     codigo: str = Field(..., description="Código de registro generado.")
     person_id: str
     alerta: AlertaFamiliar | None = Field(None, description="Familiar que ya buscaba a esta persona, si hay match.")
+    contenido_sensible: bool = Field(
+        False,
+        description="true si la moderación marcó la(s) foto(s) como contenido sensible "
+        "(gore/violencia). La publicación SÍ se registró, pero queda señalada para revisión.",
+    )
 
 
 class ReporteFallaIn(BaseModel):
@@ -151,5 +161,8 @@ class PersonaAdmin(BaseModel):
     telefono: str | None = None
     codigo: str | None = None
     moderacion: str = "aprobada"
+    contenido_sensible: bool = Field(
+        False, description="Contenido sensible detectado por moderación automática."
+    )
     fotos: list[str]
     created_at: datetime

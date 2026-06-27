@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reencuentros — Probador de API</title>
+<style>
+  :root { --bg:#0f1420; --card:#1a2233; --line:#2a3550; --txt:#e7ecf5; --mut:#8da0c0;
+          --rojo:#e23b5a; --azul:#2563eb; --verde:#16a34a; --ok:#1f7a4d; --err:#7a1f2b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:14px 20px; background:#121a2b; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; }
+  header .cfg { margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  main { max-width:1100px; margin:0 auto; padding:20px; display:grid; gap:18px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .card h2 { margin:0 0 4px; font-size:15px; }
+  .card .ep { color:var(--mut); font-size:12px; margin-bottom:12px; font-family:ui-monospace,monospace; }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 3px; }
+  input, select, textarea { width:100%; padding:8px 10px; background:#0e1626; border:1px solid var(--line);
+          border-radius:8px; color:var(--txt); font:inherit; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  button { margin-top:12px; padding:9px 16px; border:0; border-radius:8px; background:var(--azul); color:#fff;
+          font-weight:600; cursor:pointer; }
+  button.rojo { background:var(--rojo); } button.verde { background:var(--verde); } button.ghost{ background:#26324c; }
+  button:disabled { opacity:.5; cursor:default; }
+  pre { background:#0a1019; border:1px solid var(--line); border-radius:8px; padding:10px; overflow:auto;
+        max-height:260px; font-size:12px; margin-top:10px; white-space:pre-wrap; word-break:break-word; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:99px; font-size:11px; }
+  .pill.ok{ background:var(--ok);} .pill.err{ background:var(--err);}
+  .cands { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin-top:12px; }
+  .cand { background:#0e1626; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .cand img { width:100%; height:150px; object-fit:cover; display:block; background:#000; }
+  .cand .b { padding:8px; }
+  .cand .pct { font-weight:700; font-size:16px; }
+  .cand.blur img { filter:blur(14px); }
+  .tag { font-size:10px; color:var(--mut); }
+  .muted { color:var(--mut); font-size:12px; }
+  .token-ok { color:#6ee7a8; } .token-no { color:#ff8da1; }
+  a { color:#7db0ff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🇻🇪 Reencuentros — Probador de API</h1>
+  <div class="cfg">
+    <label style="margin:0">API base</label>
+    <input id="apiBase" value="https://symtechven.com/api" style="width:280px" />
+    <span id="tokState" class="token-no">sin token admin</span>
+  </div>
+</header>
+<main>
+
+  <!-- 1. BUSCAR FAMILIAR -->
+  <div class="card">
+    <h2>👨‍👩‍👧 1. Buscar Familiar</h2>
+    <div class="ep">POST /buscados · compara la foto contra la base de ENCONTRADOS</div>
+    <label>Foto(s) de la persona buscada (con rostro)</label>
+    <input type="file" id="bfFiles" accept="image/*" multiple />
+    <div class="row">
+      <div><label>Nombre</label><input id="bfNombre" placeholder="opcional*" /></div>
+      <div><label>Apellido</label><input id="bfApellido" /></div>
+    </div>
+    <div class="row3">
+      <div><label>Cédula</label><input id="bfDoc" placeholder="opcional*" /></div>
+      <div><label>Teléfono contacto</label><input id="bfTel" /></div>
+      <div><label>Límite (1-50)</label><input id="bfLim" type="number" value="10" /></div>
+    </div>
+    <p class="muted">* Manda al menos nombre o cédula.</p>
+    <button onclick="buscarFamiliar()">Buscar coincidencias</button>
+    <div id="bfCands" class="cands"></div>
+    <pre id="bfOut">—</pre>
+  </div>
+
+  <!-- 2. REPORTAR ENCONTRADO -->
+  <div class="card">
+    <h2>🚑 2. Reportar Persona Encontrada</h2>
+    <div class="ep">POST /encontrados · registra una encontrada (y avisa si una familia la buscaba)</div>
+    <label>Foto(s) (con rostro)</label>
+    <input type="file" id="enFiles" accept="image/*" multiple />
+    <div class="row3">
+      <div><label>¿Es menor?</label><select id="enMenor"><option value="false">No</option><option value="true">Sí</option></select></div>
+      <div><label>Nombre</label><input id="enNombre" /></div>
+      <div><label>Apellido</label><input id="enApellido" /></div>
+    </div>
+    <div class="row3">
+      <div><label>Refugio *</label><input id="enRefugio" placeholder="obligatorio" /></div>
+      <div><label>Dónde se encontró</label><input id="enUbic" /></div>
+      <div><label>Encontrado por</label><input id="enPor" /></div>
+    </div>
+    <div class="row3">
+      <div><label>Tel. responsable *</label><input id="enTelResp" placeholder="obligatorio" /></div>
+      <div><label>Doc. responsable</label><input id="enDocResp" placeholder="oblig. si menor" /></div>
+      <div><label>Descripción</label><input id="enDesc" /></div>
+    </div>
+    <button class="verde" onclick="reportarEncontrado()">Registrar encontrado</button>
+    <pre id="enOut">—</pre>
+  </div>
+
+  <!-- 3. REPORTES -->
+  <div class="card">
+    <h2>🚩 3. Reportes (público)</h2>
+    <div class="ep">POST /reportes/falla · POST /reportes/publicacion</div>
+    <div class="row">
+      <div>
+        <label>Reportar FALLA — descripción</label>
+        <textarea id="rfDesc" rows="2" placeholder="Ej: el botón no responde"></textarea>
+        <label>URL (opcional)</label><input id="rfUrl" />
+        <button class="ghost" onclick="reporteFalla()">Enviar falla</button>
+      </div>
+      <div>
+        <label>Reportar PUBLICACIÓN — person_id</label>
+        <input id="rpId" placeholder="person_id del candidato" />
+        <label>Motivo</label><textarea id="rpDesc" rows="2" placeholder="Ej: contenido inadecuado"></textarea>
+        <button class="ghost" onclick="reportePublicacion()">Reportar publicación</button>
+      </div>
+    </div>
+    <pre id="rOut">—</pre>
+  </div>
+
+  <!-- 4. ADMIN -->
+  <div class="card">
+    <h2>🛡️ 4. Superadmin</h2>
+    <div class="ep">POST /admin/login · /buscar · /admin/personas · /admin/reportes · moderación</div>
+    <div class="row3">
+      <div><label>Usuario</label><input id="adUser" value="symtechadmin" /></div>
+      <div><label>Password</label><input id="adPass" type="password" /></div>
+      <div style="align-self:end"><button onclick="login()">Login</button></div>
+    </div>
+    <hr style="border-color:var(--line); margin:16px 0" />
+
+    <h3 style="font-size:13px">🔍 Buscar como admin (contra TODA la base o filtrando)</h3>
+    <div class="ep">POST /buscar</div>
+    <input type="file" id="adFile" accept="image/*" />
+    <div class="row3">
+      <div><label>Límite</label><input id="adLim" type="number" value="10" /></div>
+      <div><label>Estado</label><select id="adEstado"><option value="">todas</option><option value="encontrada">encontrada</option><option value="buscada">buscada</option></select></div>
+      <div style="align-self:end"><button onclick="adminBuscar()">Buscar</button></div>
+    </div>
+    <div id="adCands" class="cands"></div>
+
+    <h3 style="font-size:13px; margin-top:16px">📋 Listar registros</h3>
+    <div class="ep">GET /admin/personas</div>
+    <div class="row3">
+      <div><label>Estado</label><select id="lsEstado"><option value="">todas</option><option value="encontrada">encontrada</option><option value="buscada">buscada</option></select></div>
+      <div><label>Moderación</label><select id="lsMod"><option value="">todas</option><option value="aprobada">aprobada</option><option value="pendiente">pendiente</option><option value="rechazada">rechazada</option></select></div>
+      <div style="align-self:end"><button onclick="listar()">Listar</button></div>
+    </div>
+
+    <h3 style="font-size:13px; margin-top:16px">🚩 Ver reportes &nbsp; 🛠️ Moderar / Eliminar</h3>
+    <div class="row3">
+      <div style="align-self:end"><button class="ghost" onclick="verReportes()">GET /admin/reportes</button></div>
+      <div>
+        <label>person_id a moderar</label><input id="modId" />
+        <select id="modVal"><option>aprobada</option><option>rechazada</option><option>pendiente</option></select>
+      </div>
+      <div style="align-self:end">
+        <button class="ghost" onclick="moderar()">PATCH moderación</button>
+        <button class="rojo" onclick="eliminar()">DELETE</button>
+      </div>
+    </div>
+    <pre id="adOut">—</pre>
+  </div>
+
+</main>
+
+<script>
+let TOKEN = localStorage.getItem('reenc_token') || '';
+const $ = id => document.getElementById(id);
+const api = () => $('apiBase').value.replace(/\/+$/,'');
+const imgBase = () => api().replace(/\/api$/,'');     // /fotos/... cuelga del dominio raíz
+const setTok = () => { const e=$('tokState'); if(TOKEN){e.textContent='token admin ✔'; e.className='token-ok';} else {e.textContent='sin token admin'; e.className='token-no';} };
+setTok();
+
+function show(el, data, ok=true){
+  el.textContent = (typeof data==='string') ? data : JSON.stringify(data, null, 2);
+  el.style.borderColor = ok ? 'var(--ok)' : 'var(--err)';
+}
+async function call(path, {method='GET', form=null, json=null, auth=false}={}){
+  const headers={}; if(auth && TOKEN) headers['Authorization']='Bearer '+TOKEN;
+  let body; if(json){ headers['Content-Type']='application/json'; body=JSON.stringify(json);} if(form) body=form;
+  const r = await fetch(api()+path, {method, headers, body});
+  let data; try{ data=await r.json(); }catch{ data=await r.text(); }
+  return {ok:r.ok, status:r.status, data};
+}
+function cardHtml(c){
+  const blur = c.contenido_sensible ? 'blur' : '';
+  const src = c.image_url ? (c.image_url.startsWith('http')?c.image_url:imgBase()+c.image_url) : '';
+  const nombre = (c.nombre||'Sin nombre')+' '+(c.apellido||'');
+  return `<div class="cand ${blur}">
+    <img src="${src}" onerror="this.style.background='#7a1f2b'" />
+    <div class="b">
+      <div class="pct">${c.coincidencia}%</div>
+      <div>${nombre}</div>
+      <div class="tag">${c.confianza} · ${c.estado}${c.contenido_sensible?' · ⚠️sensible':''}</div>
+      <div class="tag">${c.person_id}</div>
+    </div></div>`;
+}
+
+// 1
+async function buscarFamiliar(){
+  const f=new FormData();
+  for(const file of $('bfFiles').files) f.append('files', file);
+  ['bfNombre:nombre','bfApellido:apellido','bfDoc:doc_numero','bfTel:telefono_contacto'].forEach(p=>{
+    const [id,name]=p.split(':'); if($(id).value) f.append(name,$(id).value); });
+  f.append('limite', $('bfLim').value||10);
+  const {ok,status,data}=await call('/buscados',{method:'POST',form:f});
+  show($('bfOut'), {status, ...(typeof data==='object'?data:{data})}, ok);
+  $('bfCands').innerHTML = (ok && data.coincidencias) ? data.coincidencias.map(cardHtml).join('') : '';
+}
+// 2
+async function reportarEncontrado(){
+  const f=new FormData();
+  for(const file of $('enFiles').files) f.append('files', file);
+  f.append('es_menor',$('enMenor').value);
+  [['enNombre','nombre'],['enApellido','apellido'],['enRefugio','refugio'],['enUbic','ubicacion'],
+   ['enPor','encontrado_por'],['enTelResp','telefono_responsable'],['enDocResp','doc_responsable'],
+   ['enDesc','descripcion']].forEach(([id,name])=>{ if($(id).value) f.append(name,$(id).value); });
+  const {ok,status,data}=await call('/encontrados',{method:'POST',form:f});
+  show($('enOut'), {status, ...(typeof data==='object'?data:{data})}, ok);
+}
+// 3
+async function reporteFalla(){
+  const {ok,status,data}=await call('/reportes/falla',{method:'POST',json:{descripcion:$('rfDesc').value,url:$('rfUrl').value||null}});
+  show($('rOut'), {status,...data}, ok);
+}
+async function reportePublicacion(){
+  const {ok,status,data}=await call('/reportes/publicacion',{method:'POST',json:{person_id:$('rpId').value,descripcion:$('rpDesc').value}});
+  show($('rOut'), {status,...data}, ok);
+}
+// 4
+async function login(){
+  const {ok,status,data}=await call('/admin/login',{method:'POST',json:{usuario:$('adUser').value,password:$('adPass').value}});
+  if(ok && data.token){ TOKEN=data.token; localStorage.setItem('reenc_token',TOKEN); }
+  setTok(); show($('adOut'), {status, token: ok?'(guardado) '+data.token.slice(0,24)+'…':data}, ok);
+}
+async function adminBuscar(){
+  const f=new FormData(); if($('adFile').files[0]) f.append('file',$('adFile').files[0]);
+  f.append('limite',$('adLim').value||10); if($('adEstado').value) f.append('estado',$('adEstado').value);
+  const {ok,status,data}=await call('/buscar',{method:'POST',form:f,auth:true});
+  show($('adOut'), {status, n: Array.isArray(data)?data.length:0}, ok);
+  $('adCands').innerHTML = (ok && Array.isArray(data)) ? data.map(cardHtml).join('') : '';
+}
+async function listar(){
+  let q='?limite=20'; if($('lsEstado').value)q+='&estado='+$('lsEstado').value; if($('lsMod').value)q+='&moderacion='+$('lsMod').value;
+  const {ok,status,data}=await call('/admin/personas'+q,{auth:true});
+  show($('adOut'), {status, total:Array.isArray(data)?data.length:0, data}, ok);
+}
+async function verReportes(){
+  const {ok,status,data}=await call('/admin/reportes?limite=20',{auth:true});
+  show($('adOut'), {status, total:Array.isArray(data)?data.length:0, data}, ok);
+}
+async function moderar(){
+  const {ok,status,data}=await call('/admin/personas/'+$('modId').value+'/moderacion?valor='+$('modVal').value,{method:'PATCH',auth:true});
+  show($('adOut'), {status,...(typeof data==='object'?data:{data})}, ok);
+}
+async function eliminar(){
+  if(!confirm('¿Eliminar '+$('modId').value+'? Esto borra la persona y su foto.')) return;
+  const {ok,status,data}=await call('/admin/personas/'+$('modId').value,{method:'DELETE',auth:true});
+  show($('adOut'), {status,...(typeof data==='object'?data:{data})}, ok);
+}
+</script>
+</body>
+</html>

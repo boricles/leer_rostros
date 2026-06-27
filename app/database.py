@@ -38,6 +38,9 @@ _EXTRA_COLS = [
     ("ubicacion", "TEXT"),
     ("codigo", "TEXT"),
     ("encontrado_por", "TEXT"),  # nombre de quien encontró a la persona
+    # Moderación automática: contenido sensible (gore/violencia) detectado por el modelo.
+    # NO oculta la publicación; el front la difumina y el superadmin la revisa.
+    ("contenido_sensible", "BOOLEAN NOT NULL DEFAULT false"),
     # Moderación: 'aprobada' (visible) | 'rechazada' (oculta) | 'pendiente'.
     ("moderacion", "TEXT NOT NULL DEFAULT 'aprobada'"),
 ]

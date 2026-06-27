@@ -17,7 +17,7 @@ import requests
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import faces
+from app import faces, moderation
 from app.auth import (
     create_access_token,
     get_admin_by_username,
@@ -79,17 +79,49 @@ def get_repo() -> PersonaRepository:
     return _repo
 
 
-async def _procesar_fotos(files: list[UploadFile]):
-    """Por cada foto con rostro válido, extrae sus embeddings (base + rotaciones ±15°).
-
-    Devuelve `[(data, content_type, [(embedding, calidad), ...]), ...]`, omitiendo las
-    fotos sin rostro o de baja calidad."""
-    procesadas = []
+async def _leer_fotos(files: list[UploadFile]) -> list[tuple[bytes, str]]:
+    """Lee los bytes de cada archivo subido -> `[(data, content_type), ...]`."""
+    out: list[tuple[bytes, str]] = []
     for f in files:
         data = await f.read()
         if not data:
             continue
-        ct = f.content_type or "image/jpeg"
+        out.append((data, f.content_type or "image/jpeg"))
+    return out
+
+
+def _moderar_lote(imgs: list[tuple[bytes, str]]) -> tuple[bool, list[str]]:
+    """Modera las imágenes ANTES de guardarlas.
+
+    - Si alguna es NSFW (desnudez explícita) -> HTTP 422: la subida se rechaza
+      entera y no se guarda NADA.
+    - Devuelve `(contenido_sensible, etiquetas)` para el gore/violencia (no bloquea).
+    """
+    contenido_sensible = False
+    etiquetas: list[str] = []
+    for data, _ in imgs:
+        v = moderation.moderar(data)
+        if v.nsfw:
+            raise HTTPException(
+                422,
+                "La imagen contiene desnudez explícita y no puede publicarse. "
+                "Sube una foto del rostro, sin contenido sexual.",
+            )
+        if v.sensible:
+            contenido_sensible = True
+            # unión preservando orden, sin duplicados
+            etiquetas = list(dict.fromkeys(etiquetas + v.etiquetas))
+    return contenido_sensible, etiquetas
+
+
+def _procesar_fotos(imgs: list[tuple[bytes, str]]):
+    """Por cada foto con rostro válido, extrae sus embeddings (base + rotaciones ±15°).
+
+    Recibe `[(data, content_type), ...]` y devuelve
+    `[(data, content_type, [(embedding, calidad), ...]), ...]`, omitiendo las fotos
+    sin rostro o de baja calidad."""
+    procesadas = []
+    for data, ct in imgs:
         try:
             embs = faces.embeddings_from_bytes(data)
         except ValueError:
@@ -127,6 +159,7 @@ async def lifespan(app: FastAPI):
 
     pool = get_pool()
     faces.warmup()
+    moderation.warmup()
 
     # Instantiate policy and repository
     s = get_settings()
@@ -242,6 +275,16 @@ una **alerta** con el nombre y teléfono del familiar.
 | `doc_responsable` | texto | **Sí si `es_menor`** | `V-11111111` |
 | `descripcion` | texto | no | `cabello castaño, 1.20 m` |
 
+> **🛡️ Moderación automática de imágenes** (en `POST /buscados`, `POST /encontrados` y
+> la importación): cada foto se analiza al subirla.
+> - **Desnudez explícita (NSFW)** → la subida se **rechaza con `422`** y **no se guarda
+>   nada**. Mensaje: *"La imagen contiene desnudez explícita…"*.
+> - **Contenido sensible (gore/violencia/armas)** → la publicación **SÍ se registra**,
+>   pero se marca con **`contenido_sensible: true`** en la respuesta y en los candidatos
+>   de búsqueda. El front debe **difuminar la foto** y mostrar un aviso. Además se crea
+>   un reporte automático para que el superadmin lo revise en `GET /admin/reportes`.
+>   El registro **no se oculta** (en catástrofe, una persona herida es contenido legítimo).
+
 > **Menores:** `es_menor=true` marca al niño. Sus datos se **guardan** siempre, pero en
 > las **búsquedas** se protegen según la confianza del match: si la `coincidencia` del
 > resultado es **≥ 20 %** se muestran `nombre`/`apellido`; si es **< 20 %** llegan como
@@ -288,6 +331,8 @@ Cada candidato trae:
 - **`confianza`**: `alta` (<0.40, casi seguro) · `media` (0.40-0.55, revisar) · `baja`.
 - **`distancia`**: valor técnico (menor = más parecido; 0 = idéntico).
 - **`refugio`, `ubicacion`, `telefono`**: datos para el reencuentro (el botón *"Es mi familiar"*).
+- **`contenido_sensible`** (bool): si es `true`, la moderación detectó gore/violencia →
+  el front debe **difuminar** la imagen y mostrar un aviso antes de revelarla.
 """
 
 app = FastAPI(
@@ -366,7 +411,9 @@ async def registrar_busqueda(
         10, description="Cuántas coincidencias devolver (1-50). El front lo decide."
     ),
 ):
-    procesadas = await _procesar_fotos(files)
+    imgs = await _leer_fotos(files)
+    contenido_sensible, _ = _moderar_lote(imgs)  # NSFW -> 422 aquí mismo
+    procesadas = _procesar_fotos(imgs)
     use_case = RegistrarBusqueda(get_repo(), get_policy())
     return _use_case_execute(
         use_case.execute,
@@ -378,6 +425,7 @@ async def registrar_busqueda(
         doc_numero=doc_numero,
         telefono_contacto=telefono_contacto,
         limite=limite,
+        contenido_sensible=contenido_sensible,
     )
 
 
@@ -412,7 +460,9 @@ async def registrar_encontrado(
     ),
     descripcion: str | None = Form(None, description="Descripción física básica."),
 ):
-    procesadas = await _procesar_fotos(files)
+    imgs = await _leer_fotos(files)
+    contenido_sensible, etiquetas = _moderar_lote(imgs)  # NSFW -> 422 aquí mismo
+    procesadas = _procesar_fotos(imgs)
     use_case = RegistrarEncontrado(get_repo(), get_policy())
     return _use_case_execute(
         use_case.execute,
@@ -428,6 +478,8 @@ async def registrar_encontrado(
         telefono_responsable=telefono_responsable,
         doc_responsable=doc_responsable,
         descripcion=descripcion,
+        contenido_sensible=contenido_sensible,
+        etiquetas_sensibles=etiquetas,
     )
 
 
@@ -686,6 +738,13 @@ async def importar_encontrado(datos: ImportarEncontradoIn):
     except Exception as e:
         raise HTTPException(422, f"No se pudo descargar la foto: {e}") from None
 
+    # Moderación: NSFW -> no se importa; gore/violencia -> se importa con flag.
+    veredicto = moderation.moderar(img)
+    if veredicto.nsfw:
+        raise HTTPException(
+            422, "La imagen contiene desnudez explícita y no puede importarse."
+        )
+
     # Extraer rostro(s). Si no hay rostro, se rechaza (no entra basura a la base).
     try:
         embs = faces.embeddings_from_bytes(img)
@@ -718,8 +777,10 @@ async def importar_encontrado(datos: ImportarEncontradoIn):
         refugio=ubic,
         ubicacion=ubic,
         descripcion=descripcion,
+        contenido_sensible=veredicto.sensible,
         codigo=cod,
     )
-    with get_pool().connection() as conn:
-        get_repo().add(persona, [(img, "image/jpeg", embs)])
+    get_repo().add(person_id, persona, [(img, "image/jpeg", embs)])
+    if veredicto.sensible:
+        get_repo().crear_reporte_auto_sensible(person_id, veredicto.etiquetas)
     return ImportarResultado(estado="creado", person_id=str(person_id), codigo=cod)

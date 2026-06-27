@@ -38,6 +38,20 @@ class Settings(BaseSettings):
     confidence_sigmoid_k: float = 12.0  # pendiente de la curva de confianza
     confidence_sigmoid_midpoint: float = 0.40  # distancia donde la confianza = 50 %
 
+    # --- Moderación de contenido de las imágenes subidas (ver app/moderation.py) ---
+    # NSFW (desnudez) -> se RECHAZA la subida.  Gore/violencia -> se MARCA con un flag.
+    # Ambos modelos son ONNX (sin PyTorch). Se pueden apagar con MODERATION_ENABLED=false.
+    moderation_enabled: bool = True
+    # NudeNet: score mínimo por clase explícita para considerar la imagen NSFW.
+    nsfw_threshold: float = 0.55
+    # CLIP zero-shot: probabilidad agregada mínima de las categorías sensibles
+    # (gore/violencia/arma/cadáver) para marcar la imagen como contenido_sensible.
+    # NOTA (calibración 2026-06-27): el detector de gore (CLIP zero-shot) es RUIDOSO con
+    # fotos tipo retrato — fotos normales puntúan 0.2–0.7. Umbral alto (0.75) a propósito:
+    # solo marca casos extremos para evitar falsos positivos sobre personas normales.
+    # Es best-effort; recalibrar con casos reales de gore etiquetados. NudeNet (NSFW) sí es fiable.
+    gore_threshold: float = 0.75
+
     # Superadmin — BOOTSTRAP únicamente.
     # `admin_user` / `admin_password` SÓLO se usan la primera vez para sembrar la tabla
     # `admins` desde env vars (ver main.lifespan). El login real valida SIEMPRE contra

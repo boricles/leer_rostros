@@ -327,3 +327,52 @@ class TestRegistrarEncontradoRepoIntegration:
 
         persona = fake_repo._personas[0]
         assert persona.es_menor
+
+
+class TestRegistrarEncontradoContenidoSensible:
+    def test_flag_default_false_no_reporte(self, use_case, fake_repo):
+        """Sin contenido sensible: flag False y NO se crea reporte automático."""
+        procesadas = _make_procesadas()
+        result = use_case.execute(
+            procesadas=procesadas,
+            es_menor=False,
+            nombre="Test",
+            apellido=None,
+            doc_tipo=None,
+            doc_numero=None,
+            refugio="Refugio",
+            ubicacion=None,
+            telefono_responsable="0414-1234567",
+            doc_responsable=None,
+            descripcion=None,
+        )
+        assert result.contenido_sensible is False
+        assert fake_repo._personas[0].contenido_sensible is False
+        assert fake_repo._reportes_auto == []
+
+    def test_flag_true_persiste_y_crea_reporte(self, use_case, fake_repo):
+        """Contenido sensible: flag persistido, devuelto y reporte automático creado."""
+        procesadas = _make_procesadas()
+        result = use_case.execute(
+            procesadas=procesadas,
+            es_menor=False,
+            nombre="Test",
+            apellido=None,
+            doc_tipo=None,
+            doc_numero=None,
+            refugio="Refugio",
+            ubicacion=None,
+            telefono_responsable="0414-1234567",
+            doc_responsable=None,
+            descripcion=None,
+            contenido_sensible=True,
+            etiquetas_sensibles=["a graphic photo with blood and gore"],
+        )
+        assert result.contenido_sensible is True
+        stored = fake_repo._personas[0]
+        assert stored.contenido_sensible is True
+        # se registró exactamente un reporte automático para esta persona
+        assert len(fake_repo._reportes_auto) == 1
+        pid, etiquetas = fake_repo._reportes_auto[0]
+        assert pid == str(stored.person_id)
+        assert "blood" in etiquetas[0]

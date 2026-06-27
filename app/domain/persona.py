@@ -45,6 +45,7 @@ class PersonaBase(BaseModel):
     ubicacion: str | None = None
     codigo: str | None = None
     encontrado_por: str | None = None  # nombre de quien encontró a la persona
+    contenido_sensible: bool = False  # gore/violencia detectado por moderación automática
     photos: list[str] = Field(default_factory=list)  # list of image_urls
     distancia: float | None = None  # only populated for search results
     moderacion: str = "aprobada"

@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    INSIGHTFACE_HOME=/weights
+    INSIGHTFACE_HOME=/weights \
+    HF_HOME=/weights/hf
 
 # Dependencias de sistema: OpenCV (libgl1/libglib2) + toolchain para compilar
 # insightface (extensiones C/Cython) durante el pip install.

@@ -325,3 +325,19 @@ class TestRegistrarBusquedaRepoIntegration:
 
         persona = fake_repo._personas[0]
         assert persona.moderacion == "aprobada"
+
+    def test_contenido_sensible_passthrough(self, use_case, fake_repo):
+        """El flag contenido_sensible se persiste en la persona buscada."""
+        procesadas = _make_procesadas()
+        use_case.execute(
+            procesadas=procesadas,
+            nombre="Test",
+            apellido=None,
+            edad=None,
+            doc_tipo=None,
+            doc_numero=None,
+            telefono_contacto=None,
+            limite=10,
+            contenido_sensible=True,
+        )
+        assert fake_repo._personas[0].contenido_sensible is True

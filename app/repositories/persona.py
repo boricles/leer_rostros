@@ -18,7 +18,8 @@ def _cols_with_alias(alias: str) -> str:
     """Column list with table alias prefix for search queries."""
     cols = (
         "person_id, estado, es_menor, nombre, apellido, edad, refugio, ubicacion, "
-        "telefono_responsable, telefono_contacto, descripcion, encontrado_por, image_url"
+        "telefono_responsable, telefono_contacto, descripcion, encontrado_por, "
+        "contenido_sensible, image_url"
     )
     return ", ".join(f"{alias}.{c.strip()}" for c in cols.split(","))
 
@@ -34,11 +35,11 @@ class PersonaRepository:
           (id, person_id, estado, es_menor, nombre, apellido, edad, doc_tipo,
            doc_numero, telefono_contacto, refugio, telefono_responsable,
            doc_responsable, descripcion, ubicacion, codigo, encontrado_por,
-           image_url, image_key)
+           contenido_sensible, image_url, image_key)
         VALUES (%(id)s, %(pid)s, %(estado)s, %(menor)s, %(nombre)s, %(apellido)s, %(edad)s,
                 %(doc_tipo)s, %(doc_numero)s, %(tel_contacto)s, %(refugio)s, %(tel_resp)s,
                 %(doc_resp)s, %(descripcion)s, %(ubicacion)s, %(codigo)s, %(encontrado_por)s,
-                %(url)s, %(key)s)
+                %(sensible)s, %(url)s, %(key)s)
     """
 
     # INSERT into persona_embeddings (one row per embedding)
@@ -92,7 +93,8 @@ class PersonaRepository:
         SELECT person_id, max(estado), bool_or(es_menor), max(nombre), max(apellido),
                max(edad), max(doc_numero), max(refugio), max(ubicacion),
                coalesce(max(telefono_responsable), max(telefono_contacto)),
-               max(codigo), max(moderacion), array_agg(image_url), min(created_at)
+               max(codigo), max(moderacion), bool_or(contenido_sensible),
+               array_agg(image_url), min(created_at)
         FROM personas {where}
         GROUP BY person_id ORDER BY min(created_at) DESC LIMIT %s
     """
@@ -156,6 +158,7 @@ class PersonaRepository:
                     "ubicacion": persona.ubicacion,
                     "codigo": persona.codigo,
                     "encontrado_por": persona.encontrado_por,
+                    "sensible": persona.contenido_sensible,
                     # SQL-specific fields
                     "id": foto_id,
                     "pid": person_id,
@@ -273,6 +276,7 @@ class PersonaRepository:
             tel_contacto,
             descripcion,
             encontrado_por,
+            contenido_sensible,
             image_url,
             distancia,
         ) = row
@@ -288,6 +292,7 @@ class PersonaRepository:
             "ubicacion": ubicacion or refugio,
             "telefono": tel_resp or tel_contacto,
             "encontrado_por": encontrado_por,
+            "contenido_sensible": bool(contenido_sensible),
             "descripcion": descripcion,
             "image_url": image_url,
             "distancia": round(d, 4),
@@ -310,6 +315,7 @@ class PersonaRepository:
             telefono,
             codigo,
             moderacion,
+            contenido_sensible,
             fotos,
             created_at,
         ) = row
@@ -326,6 +332,22 @@ class PersonaRepository:
             "telefono": telefono,
             "codigo": codigo,
             "moderacion": moderacion,
+            "contenido_sensible": bool(contenido_sensible),
             "fotos": list(fotos),
             "created_at": created_at,
         }
+
+    def crear_reporte_auto_sensible(self, person_id: UUID, etiquetas: list[str]) -> None:
+        """Crea un reporte automático para que el superadmin revise una publicación
+        marcada como contenido sensible por la moderación. Best-effort (no rompe la subida).
+        """
+        detalle = ", ".join(etiquetas) if etiquetas else "gore/violencia"
+        descripcion = f"[auto] Contenido sensible detectado por moderación: {detalle}."
+        with suppress(Exception):
+            with self._pool.connection() as conn:
+                conn.execute(
+                    "INSERT INTO reportes (tipo, descripcion, person_id, estado) "
+                    "VALUES ('publicacion', %s, %s, 'pendiente')",
+                    (descripcion, person_id),
+                )
+                conn.commit()

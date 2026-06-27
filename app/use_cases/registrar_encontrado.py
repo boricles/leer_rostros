@@ -33,6 +33,8 @@ class RegistrarEncontrado:
         encontrado_por: str | None = None,
         doc_responsable: str | None,
         descripcion: str | None,
+        contenido_sensible: bool = False,
+        etiquetas_sensibles: list[str] | None = None,
     ) -> ResultadoRegistro:
         """Register a found person and return registration result with optional alert.
 
@@ -79,12 +81,17 @@ class RegistrarEncontrado:
             telefono_responsable=telefono_responsable,
             doc_responsable=doc_responsable,
             descripcion=descripcion,
+            contenido_sensible=contenido_sensible,
             moderacion="pendiente",
             codigo=codigo,
         )
 
         # Persist
         self._repo.add(person_id, persona, procesadas)
+
+        # Si la moderación marcó contenido sensible, avisar al superadmin (best-effort).
+        if contenido_sensible:
+            self._repo.crear_reporte_auto_sensible(person_id, etiquetas_sensibles or [])
 
         # Cross-flow search for matching buscada
         embedding = _embedding_consulta(procesadas)
@@ -111,4 +118,5 @@ class RegistrarEncontrado:
             codigo=codigo,
             person_id=str(person_id),
             alerta=alerta,
+            contenido_sensible=contenido_sensible,
         )

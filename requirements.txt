@@ -11,6 +11,12 @@ opencv-python-headless
 insightface
 onnxruntime
 
+# --- Moderación de contenido (NSFW + gore), todo ONNX, SIN PyTorch ---
+nudenet           # detección de desnudez (ONNX) -> rechazo de NSFW
+transformers      # CLIP processor/tokenizer para zero-shot de gore (no requiere torch)
+huggingface_hub   # descarga de los pesos ONNX de CLIP
+Pillow            # preprocesamiento de imagen para CLIP
+
 # Auth de admin: hash de password (bcrypt) + JWT firmado.
 # bcrypt<4.1: passlib 1.7.4 lee un atributo interno que se renombró en 4.1+.
 passlib[bcrypt]<1.8

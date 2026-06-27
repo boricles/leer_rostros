@@ -34,6 +34,7 @@ class FakePersonaRepository:
             str, list[bytes]
         ] = {}  # person_id -> list of fake embeddings
         self._deleted: list[str] = []
+        self._reportes_auto: list[tuple[str, list[str]]] = []  # (person_id, etiquetas)
 
     def add(
         self,
@@ -100,6 +101,10 @@ class FakePersonaRepository:
                 break
         return results
 
+    def crear_reporte_auto_sensible(self, person_id: UUID, etiquetas: list[str]) -> None:
+        """Registra (en memoria) un reporte automático de contenido sensible."""
+        self._reportes_auto.append((str(person_id), list(etiquetas)))
+
     def set_moderacion(self, person_id: str, valor: str) -> int:
         """Update moderacion for all personas with the given person_id."""
         count = 0
@@ -134,6 +139,8 @@ class FakePersonaRepository:
             "refugio": persona.refugio,
             "ubicacion": persona.ubicacion or persona.refugio,
             "telefono": persona.telefono_responsable or persona.telefono_contacto,
+            "encontrado_por": persona.encontrado_por,
+            "contenido_sensible": persona.contenido_sensible,
             "descripcion": persona.descripcion,
             "image_url": persona.photos[0] if persona.photos else "",
             "distancia": distancia,
@@ -156,6 +163,7 @@ class FakePersonaRepository:
             "telefono": persona.telefono_responsable or persona.telefono_contacto,
             "codigo": persona.codigo,
             "moderacion": persona.moderacion,
+            "contenido_sensible": persona.contenido_sensible,
             "fotos": persona.photos,
             "created_at": datetime.now(),
         }

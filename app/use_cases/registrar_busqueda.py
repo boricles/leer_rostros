@@ -29,6 +29,7 @@ class RegistrarBusqueda:
         doc_numero: str | None,
         telefono_contacto: str | None,
         limite: int,
+        contenido_sensible: bool = False,
     ) -> ResultadoBusqueda:
         """Register a missing-person search and return ranked candidates.
 
@@ -71,6 +72,7 @@ class RegistrarBusqueda:
             doc_tipo=doc_tipo,
             doc_numero=doc_numero,
             telefono_contacto=telefono_contacto,
+            contenido_sensible=contenido_sensible,
             moderacion="aprobada",
             codigo=codigo,
         )
