@@ -1,5 +1,17 @@
 # Tasks: `core-domain` — Persona Domain, Matching Policy, and Menores Privacy
 
+**Status**: All 9 phases complete (2026-01-07). See `apply-progress.md` for full report.
+
+- Phase 1 (Test infrastructure): ✅ Complete
+- Phase 2 (Schema changes): ✅ Complete
+- Phase 3 (Domain layer): ✅ Complete
+- Phase 4 (Repository layer): ✅ Complete
+- Phase 5 (Endpoint refactoring): ✅ Complete
+- Phase 6 (Frontend simplification): ✅ Complete
+- Phase 7 (Documentation): ✅ Complete
+- Phase 8 (V0 cleanup): ✅ Complete
+- Phase 9 (Verification): ✅ Complete — 22/22 tests pass, domain 100% coverage
+
 ## Review Workload Forecast
 
 | Field | Value |
