@@ -62,9 +62,9 @@
     <!-- Registrar -->
     <div class="card">
       <h2>1 · Registrar persona</h2>
-      <p class="hint">Sube la foto de a quién buscas (familiar) o de a quién encontraste (rescatista).</p>
+      <p class="hint">Sube una o <b>varias fotos</b> de la misma persona (más ángulos = más fácil encontrarla).</p>
       <img id="prevReg" class="preview" />
-      <input type="file" id="fileReg" accept="image/*" />
+      <input type="file" id="fileReg" accept="image/*" multiple />
       <label>Nombre (opcional)</label>
       <input type="text" id="nombre" placeholder="Ej: José Pérez" />
       <label>Cédula / ID (opcional)</label>
@@ -99,12 +99,13 @@ bindPreview("fileReg", "prevReg");
 bindPreview("fileBus", "prevBus");
 
 document.getElementById("btnReg").addEventListener("click", async () => {
-  const f = document.getElementById("fileReg").files[0];
+  const files = document.getElementById("fileReg").files;
   const res = document.getElementById("resReg");
-  if (!f) { res.innerHTML = '<span class="empty">Selecciona una imagen.</span>'; return; }
-  const btn = document.getElementById("btnReg"); btn.disabled = true; res.textContent = "Procesando rostro y subiendo al bucket...";
+  if (!files.length) { res.innerHTML = '<span class="empty">Selecciona una o varias imágenes.</span>'; return; }
+  const btn = document.getElementById("btnReg"); btn.disabled = true;
+  res.textContent = `Procesando ${files.length} foto(s) y subiendo al bucket...`;
   const fd = new FormData();
-  fd.append("file", f);
+  for (const f of files) fd.append("files", f);
   fd.append("nombre", document.getElementById("nombre").value);
   fd.append("ci", document.getElementById("ci").value);
   fd.append("estado", document.getElementById("estado").value || "desaparecida");
@@ -112,8 +113,8 @@ document.getElementById("btnReg").addEventListener("click", async () => {
     const r = await fetch(API + "/personas", { method: "POST", body: fd });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || "Error");
-    res.innerHTML = `<span class="badge ok">Registrado</span> ID: <code>${data.id.slice(0,18)}…</code><br>
-      <a href="${data.image_url}" target="_blank" style="color:var(--accent)">Ver imagen en el bucket ↗</a>`;
+    res.innerHTML = `<span class="badge ok">Registrado</span> ${data.fotos.length} foto(s) · ID: <code>${data.person_id.slice(0,18)}…</code><br>
+      <a href="${data.fotos[0]}" target="_blank" style="color:var(--accent)">Ver imagen en el bucket ↗</a>`;
   } catch (e) { res.innerHTML = '<span class="badge no">Error</span> ' + e.message; }
   finally { btn.disabled = false; }
 });
