@@ -22,12 +22,13 @@ class Settings(BaseSettings):
     database_url: str
 
     # Reconocimiento facial.
-    # SFace + retinaface = mejor combinación según evaluación exhaustiva con fotos
-    # reales (mayor margen de seguridad: misma persona <=0.446, distintas >=0.683).
-    # Umbral 0.55 = 0 falsos positivos / 0 falsos negativos en las pruebas.
-    face_model: str = "SFace"
-    embedding_dim: int = 128
-    match_threshold: float = 0.55
+    # Facenet512 + retinaface = mejor combinación según benchmark a escala (LFW
+    # 97-100%) y la literatura: el más robusto a fotos mal encuadradas y diversas,
+    # ideal para fotos de rescate. SFace gana en fotos perfectas pero NO generaliza.
+    # Umbral 0.50 calibrado con datos reales (misma persona <=0.469, distintas >=0.549).
+    face_model: str = "Facenet512"
+    embedding_dim: int = 512
+    match_threshold: float = 0.50
     face_detector: str = "retinaface"
 
     @property

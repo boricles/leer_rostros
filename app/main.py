@@ -19,10 +19,10 @@ from app.schemas import Coincidencia, PersonaOut, ResultadoBusqueda
 
 CONTENT_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
-# Bandas de confianza calibradas con la evaluación (misma persona <=0.446,
-# distintas >=0.683). Menor distancia = más parecido.
-CONF_ALTA = 0.45
-CONF_MEDIA = 0.60
+# Bandas de confianza calibradas para Facenet512 (misma persona <=0.469,
+# distintas >=0.549). Menor distancia = más parecido.
+CONF_ALTA = 0.40
+CONF_MEDIA = 0.50
 
 
 def nivel_confianza(distancia: float) -> str:

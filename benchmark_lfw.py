@@ -13,20 +13,24 @@ import os
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
+import cv2
 import numpy as np
 from sklearn.datasets import fetch_lfw_pairs
 from sklearn.metrics import roc_auc_score
 from deepface import DeepFace
 
 N = int(os.environ.get("N_PAIRS", "300"))
-MODELS = ["SFace", "Facenet", "Facenet512", "ArcFace", "VGG-Face"]
+MODELS = os.environ.get("MODELS", "SFace,Facenet,Facenet512,ArcFace,VGG-Face").split(",")
+DETECTOR = os.environ.get("FACE_DETECTOR", "skip")  # 'retinaface' = config real de producción
+ALIGN = os.environ.get("ALIGN", "0") == "1"
 
 
 def to_uint8(img):
     a = np.asarray(img)
     if a.max() <= 1.0:
         a = a * 255
-    return a.astype(np.uint8)
+    a = a.astype(np.uint8)
+    return cv2.cvtColor(a, cv2.COLOR_RGB2BGR)  # LFW viene en RGB, DeepFace espera BGR
 
 
 def cosine(a, b):
@@ -36,7 +40,7 @@ def cosine(a, b):
 def emb(model, img):
     r = DeepFace.represent(
         img_path=img, model_name=model,
-        detector_backend="skip", enforce_detection=False, align=False,
+        detector_backend=DETECTOR, enforce_detection=False, align=ALIGN,
     )
     return np.array(r[0]["embedding"], dtype=np.float32)
 
