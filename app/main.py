@@ -11,6 +11,7 @@
 import uuid
 from contextlib import asynccontextmanager
 
+import requests
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 
 # psycopg (database) ANTES que faces (TensorFlow) para evitar crash nativo.
@@ -31,6 +32,8 @@ from app.schemas import (
     Candidato,
     LoginBody,
     LoginResp,
+    ImportarEncontradoIn,
+    ImportarResultado,
     PersonaAdmin,
     ReporteAdmin,
     ReporteCreado,
@@ -256,6 +259,7 @@ async def lifespan(app: FastAPI):
 tags = [
     {"name": "familiar", "description": "Flujo del familiar que busca a alguien."},
     {"name": "rescatista", "description": "Flujo de quien encontró a una persona."},
+    {"name": "importación", "description": "Carga masiva de personas encontradas (admin)."},
     {"name": "reportes", "description": "Reportar fallas de la página o publicaciones inadecuadas."},
     {"name": "admin", "description": "Superadmin: buscar, moderar y ver reportes."},
     {"name": "sistema", "description": "Estado del servicio."},
@@ -780,3 +784,73 @@ def cambiar_estado_reporte(reporte_id: str, valor: str):
     if not n:
         raise HTTPException(404, "No existe ese reporte")
     return {"id": reporte_id, "estado": valor}
+
+
+# ----------------------------- IMPORTACIÓN MASIVA -----------------------------
+
+def _descargar_imagen(url: str) -> bytes:
+    """Descarga una imagen desde una URL pública (para la carga masiva)."""
+    r = requests.get(url, timeout=25, headers={"User-Agent": "reencuentros-importer"})
+    r.raise_for_status()
+    if not r.content:
+        raise ValueError("La URL no devolvió contenido.")
+    return r.content
+
+
+@app.post("/encontrados/importar", response_model=ImportarResultado, status_code=201,
+          tags=["importación"], dependencies=[Depends(get_current_admin)],
+          responses=_ADMIN_RESPONSES,
+          summary="Importar UNA persona encontrada (descarga la foto por URL)")
+async def importar_encontrado(datos: ImportarEncontradoIn):
+    """Registra una persona **encontrada** a partir de un registro de importación:
+    descarga la `foto_url`, extrae el/los embeddings y la guarda. Pensado para que un
+    script suba grandes volúmenes (ver `cargar_encontrados.py`).
+
+    **Idempotente:** si se envía `id_externo` y ya fue importado, devuelve
+    `estado='omitido'` sin duplicar. Validaciones laxas (no exige refugio)."""
+    cod = (datos.id_externo or "").strip() or gen_codigo()
+
+    # Idempotencia: si ya importamos este id_externo, no duplicar.
+    if datos.id_externo:
+        with get_pool().connection() as conn:
+            ya = conn.execute(
+                "SELECT person_id FROM personas WHERE codigo = %s LIMIT 1", (cod,)
+            ).fetchone()
+        if ya:
+            return ImportarResultado(estado="omitido", person_id=str(ya[0]), codigo=cod,
+                                     motivo="ya importado")
+
+    # Descargar la foto.
+    try:
+        img = _descargar_imagen(datos.foto_url)
+    except Exception as e:
+        raise HTTPException(422, f"No se pudo descargar la foto: {e}")
+
+    # Extraer rostro(s). Si no hay rostro, se rechaza (no entra basura a la base).
+    try:
+        embs = faces.embeddings_from_bytes(img)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+    nombre = (datos.nombre or "").strip() or None
+    apellido = (datos.apellido or "").strip() or None
+    ubic = (datos.ultima_ubicacion or "").strip() or None
+    desc_partes = []
+    if datos.reportante_name and datos.reportante_name.strip():
+        desc_partes.append(f"Reporta: {datos.reportante_name.strip()}")
+    if datos.fuente and datos.fuente.strip():
+        desc_partes.append(f"Fuente: {datos.fuente.strip()}")
+    descripcion = " · ".join(desc_partes) or None
+
+    person_id = uuid.uuid4()
+    datos_db = dict(
+        estado="encontrada", menor=False,  # data pública: no se oculta el nombre
+        nombre=nombre, apellido=apellido, edad=(datos.edad or None),
+        doc_tipo=None, doc_numero=((datos.cedula or "").strip() or None),
+        tel_contacto=None, refugio=ubic, tel_resp=((datos.reportante_phone or "").strip() or None),
+        doc_resp=None, descripcion=descripcion, ubicacion=ubic, codigo=cod,
+    )
+    with get_pool().connection() as conn:
+        _insertar_fotos(conn, person_id, datos_db, [(img, "image/jpeg", embs)])
+        conn.commit()
+    return ImportarResultado(estado="creado", person_id=str(person_id), codigo=cod)

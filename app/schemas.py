@@ -106,6 +106,34 @@ class ReporteAdmin(BaseModel):
     pub_moderacion: str | None = Field(None, description="Estado de moderación actual de la publicación.")
 
 
+class ImportarEncontradoIn(BaseModel):
+    """Un registro de persona ENCONTRADA para carga masiva (formato de importación).
+
+    La foto se toma de `foto_url` (el server la descarga). Pensado para importar data
+    pública existente. Idempotente por `id_externo` (re-importar no duplica)."""
+
+    foto_url: str = Field(..., description="URL pública de la foto del rostro.",
+                          examples=["https://terremotovenezuela.app/api/missing/xxxx/photo"])
+    nombre: str | None = Field(None, examples=["Ricardo"])
+    apellido: str | None = Field(None, examples=["Anselmi"])
+    cedula: str | None = Field(None, description="Documento (puede ir vacío).")
+    edad: str | None = Field(None, examples=["53"])
+    ultima_ubicacion: str | None = Field(None, examples=["Los corales"])
+    reportante_phone: str | None = Field(None, description="Contacto de quien reporta (tel/email/texto).")
+    reportante_name: str | None = None
+    fuente: str | None = Field(None, description="Origen del dato (URL/fuente).")
+    id_externo: str | None = Field(None, description="ID en el sistema origen; da idempotencia al import.")
+
+
+class ImportarResultado(BaseModel):
+    """Resultado de importar un registro."""
+
+    estado: str = Field(..., description="'creado' | 'omitido' (ya existía) | error (vía HTTP 4xx).")
+    person_id: str | None = None
+    codigo: str | None = Field(None, description="Código del registro (= id_externo si se envió).")
+    motivo: str | None = None
+
+
 class PersonaAdmin(BaseModel):
     """Vista de superadmin: registro con sus datos y fotos."""
 
