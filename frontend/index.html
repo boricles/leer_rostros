@@ -5,148 +5,195 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Reencuentros — Reconocimiento facial</title>
 <style>
-  :root {
-    --bg: #0f1320; --card: #1a2032; --line: #2a3350;
-    --txt: #e8ecf5; --muted: #9aa6c4; --accent: #4f8cff;
-    --ok: #2ecc71; --bad: #ff5a5a;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    background: var(--bg); color: var(--txt); line-height: 1.5;
-  }
-  header { padding: 28px 20px 8px; text-align: center; }
-  header h1 { margin: 0; font-size: 1.6rem; }
-  header p { color: var(--muted); margin: 6px 0 0; }
-  .wrap { max-width: 920px; margin: 0 auto; padding: 20px; display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
-  @media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
-  .card {
-    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-    padding: 20px; display: flex; flex-direction: column; gap: 12px;
-  }
-  .card h2 { margin: 0; font-size: 1.15rem; }
-  .card .hint { color: var(--muted); font-size: .86rem; margin-top: -6px; }
-  label { font-size: .85rem; color: var(--muted); }
-  input[type=text] {
-    width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line);
-    background: #0d1120; color: var(--txt); font-size: .95rem;
-  }
-  input[type=file] { font-size: .85rem; color: var(--muted); }
-  .preview { width: 100%; height: 180px; object-fit: cover; border-radius: 8px; display: none; border: 1px solid var(--line); }
-  button {
-    background: var(--accent); color: white; border: 0; padding: 11px; border-radius: 8px;
-    font-size: .98rem; font-weight: 600; cursor: pointer;
-  }
-  button:disabled { opacity: .5; cursor: progress; }
-  .result { margin-top: 6px; font-size: .9rem; }
-  .match {
-    display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 10px;
-    background: #0d1120; border: 1px solid var(--line); margin-bottom: 8px;
-  }
-  .match img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; }
-  .badge { padding: 2px 9px; border-radius: 999px; font-size: .72rem; font-weight: 700; }
-  .badge.ok { background: rgba(46,204,113,.18); color: var(--ok); }
-  .badge.media { background: rgba(241,196,15,.18); color: #f1c40f; }
-  .badge.no { background: rgba(255,90,90,.15); color: var(--bad); }
-  .dist { color: var(--muted); font-size: .78rem; }
-  .empty { color: var(--muted); font-style: italic; }
+  :root{--bg:#0f1320;--card:#1a2032;--line:#2a3350;--txt:#e8ecf5;--muted:#9aa6c4;
+        --accent:#4f8cff;--ok:#2ecc71;--bad:#ff5a5a;--warn:#f1c40f;--pink:#ff6b9d;--green:#2ecc71;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt);line-height:1.5}
+  header{padding:22px 16px 6px;text-align:center}
+  header h1{margin:0;font-size:1.5rem}header p{color:var(--muted);margin:4px 0 0;font-size:.9rem}
+  .tabs{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;padding:14px}
+  .tab{background:var(--card);border:1px solid var(--line);color:var(--txt);padding:10px 16px;border-radius:10px;cursor:pointer;font-size:.9rem;font-weight:600}
+  .tab.active{border-color:var(--accent);background:#243049}
+  .wrap{max-width:560px;margin:0 auto;padding:0 16px 40px}
+  section{display:none}section.active{display:block}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  h2{margin:0 0 4px;font-size:1.1rem}.hint{color:var(--muted);font-size:.84rem;margin:0 0 12px}
+  label{display:block;font-size:.8rem;color:var(--muted);margin:10px 0 3px}
+  input[type=text],input[type=tel],select{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#0d1120;color:var(--txt)}
+  input[type=file]{font-size:.82rem;color:var(--muted);margin-top:4px}
+  .req{color:var(--bad)}
+  .preview{width:100%;max-height:220px;object-fit:cover;border-radius:8px;display:none;margin-top:8px;border:1px solid var(--line)}
+  button.go{width:100%;background:var(--accent);color:#fff;border:0;padding:12px;border-radius:9px;font-size:1rem;font-weight:700;cursor:pointer;margin-top:14px}
+  button.go:disabled{opacity:.5;cursor:progress}
+  .switch{display:flex;align-items:center;gap:10px;margin:6px 0 4px}
+  .switch input{width:20px;height:20px}
+  .row{display:flex;gap:10px}.row>div{flex:1}
+  .match{display:flex;gap:12px;align-items:center;padding:10px;border-radius:10px;background:#0d1120;border:1px solid var(--line);margin-bottom:8px}
+  .match img{width:64px;height:64px;object-fit:cover;border-radius:8px;background:#222}
+  .badge{padding:2px 9px;border-radius:999px;font-size:.72rem;font-weight:700}
+  .badge.ok{background:rgba(46,204,113,.18);color:var(--ok)}
+  .badge.media{background:rgba(241,196,15,.18);color:var(--warn)}
+  .badge.no{background:rgba(255,90,90,.15);color:var(--bad)}
+  .pct{font-weight:800;font-size:1.1rem}
+  .dim{color:var(--muted);font-size:.78rem}
+  .reveal{margin-top:6px;padding:8px;border-radius:8px;background:#10331f;border:1px solid #1d5c39;font-size:.85rem;display:none}
+  .alerta{padding:12px;border-radius:10px;background:rgba(241,196,15,.12);border:1px solid var(--warn);margin-top:10px}
+  .esmifam{background:var(--ok);color:#062a14;border:0;padding:6px 10px;border-radius:7px;font-weight:700;cursor:pointer;font-size:.78rem;margin-top:6px}
 </style>
 </head>
 <body>
-  <header>
-    <h1>🔍 Reencuentros</h1>
-    <p>Reconocimiento facial para reunir personas desaparecidas con sus familias</p>
-  </header>
+<header>
+  <h1>🔍 Reencuentros</h1>
+  <p>Reconocimiento facial para reunir personas desaparecidas con sus familias</p>
+</header>
 
-  <div class="wrap">
-    <!-- Registrar -->
-    <div class="card">
-      <h2>1 · Registrar persona</h2>
-      <p class="hint">Sube una o <b>varias fotos</b> de la misma persona (más ángulos = más fácil encontrarla).</p>
-      <img id="prevReg" class="preview" />
-      <input type="file" id="fileReg" accept="image/*" multiple />
-      <label>Nombre (opcional)</label>
-      <input type="text" id="nombre" placeholder="Ej: José Pérez" />
-      <label>Cédula / ID (opcional)</label>
-      <input type="text" id="ci" placeholder="Ej: 12345678" />
-      <label>Estado</label>
-      <input type="text" id="estado" value="desaparecida" />
-      <button id="btnReg">Registrar</button>
-      <div class="result" id="resReg"></div>
-    </div>
+<div class="tabs">
+  <button class="tab active" data-t="familiar">👨‍👩‍👧 Busco a alguien</button>
+  <button class="tab" data-t="rescatista">🟢 Encontré a alguien</button>
+  <button class="tab" data-t="admin">🛡️ Superadmin</button>
+</div>
 
-    <!-- Buscar -->
+<div class="wrap">
+  <!-- FAMILIAR -->
+  <section id="familiar" class="active">
     <div class="card">
-      <h2>2 · Buscar coincidencia</h2>
-      <p class="hint">Sube una foto y el sistema busca los rostros más parecidos ya registrados.</p>
-      <img id="prevBus" class="preview" />
-      <input type="file" id="fileBus" accept="image/*" />
-      <button id="btnBus">Buscar match</button>
-      <div class="result" id="resBus"></div>
+      <h2>Busco a un familiar/amigo</h2>
+      <p class="hint">Sube su foto y tus datos. El sistema busca entre las personas que ya fueron encontradas.</p>
+      <label>Foto del rostro <span class="req">*</span></label>
+      <input type="file" id="f_file" accept="image/*" multiple />
+      <img id="f_prev" class="preview" />
+      <div class="row"><div><label>Nombre</label><input type="text" id="f_nombre"></div>
+        <div><label>Apellido</label><input type="text" id="f_apellido"></div></div>
+      <div class="row"><div><label>Edad</label><input type="text" id="f_edad"></div>
+        <div><label>Tipo doc</label><select id="f_doctipo"><option value="">—</option><option>V</option><option>E</option><option>P</option><option>Otro</option></select></div>
+        <div><label>N° identificación</label><input type="text" id="f_docnum"></div></div>
+      <label>Tu teléfono de contacto</label><input type="tel" id="f_tel" placeholder="Para el reencuentro">
+      <button class="go" id="f_btn">Buscar coincidencias</button>
+      <div id="f_res" class="dim" style="margin-top:12px"></div>
     </div>
-  </div>
+  </section>
+
+  <!-- RESCATISTA -->
+  <section id="rescatista">
+    <div class="card">
+      <h2>Encontré a una persona</h2>
+      <p class="hint">Registra a quien encontraste. Si un familiar ya la buscaba, te avisamos.</p>
+      <div class="switch"><input type="checkbox" id="r_menor"><label style="margin:0">¿Es menor de edad? (oculta datos sensibles)</label></div>
+      <label>Foto del rostro <span class="req">*</span></label>
+      <input type="file" id="r_file" accept="image/*" multiple />
+      <img id="r_prev" class="preview" />
+      <div id="r_adulto">
+        <div class="row"><div><label>Nombre</label><input type="text" id="r_nombre"></div>
+          <div><label>Apellido</label><input type="text" id="r_apellido"></div></div>
+      </div>
+      <div class="row"><div><label>Tipo doc</label><select id="r_doctipo"><option value="">—</option><option>V</option><option>E</option><option>P</option><option>Otro</option></select></div>
+        <div><label>N° identificación</label><input type="text" id="r_docnum"></div></div>
+      <label>Refugio actual <span class="req">*</span></label><input type="text" id="r_refugio">
+      <label>¿Dónde se encontró?</label><input type="text" id="r_ubic">
+      <label>Teléfono del responsable <span class="req">*</span></label><input type="tel" id="r_telresp">
+      <div id="r_menorcampos" style="display:none">
+        <label>Identificación del responsable <span class="req">*</span></label><input type="text" id="r_docresp">
+        <label>Descripción física básica</label><input type="text" id="r_desc">
+      </div>
+      <button class="go" id="r_btn">Registrar</button>
+      <div id="r_res" class="dim" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <!-- ADMIN -->
+  <section id="admin">
+    <div class="card">
+      <h2>🛡️ Superadmin — buscar y comparar</h2>
+      <p class="hint">Sube una foto y compárala contra toda la base (buscadas y encontradas).</p>
+      <input type="file" id="a_file" accept="image/*" />
+      <img id="a_prev" class="preview" />
+      <label>Filtrar</label>
+      <select id="a_estado"><option value="">Todas</option><option value="buscada">Solo buscadas</option><option value="encontrada">Solo encontradas</option></select>
+      <button class="go" id="a_btn">Comparar</button>
+      <div id="a_res" class="dim" style="margin-top:12px"></div>
+    </div>
+  </section>
+</div>
 
 <script>
-const API = "/api";
+const API="/api";
+const $=id=>document.getElementById(id);
+function preview(inp,img){$(inp).addEventListener("change",()=>{if($(inp).files[0]){$(img).src=URL.createObjectURL($(inp).files[0]);$(img).style.display="block"}})}
+preview("f_file","f_prev");preview("r_file","r_prev");preview("a_file","a_prev");
 
-function bindPreview(inputId, imgId) {
-  const inp = document.getElementById(inputId), img = document.getElementById(imgId);
-  inp.addEventListener("change", () => {
-    if (inp.files[0]) { img.src = URL.createObjectURL(inp.files[0]); img.style.display = "block"; }
-  });
-}
-bindPreview("fileReg", "prevReg");
-bindPreview("fileBus", "prevBus");
+document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+  document.querySelectorAll("section").forEach(x=>x.classList.remove("active"));
+  t.classList.add("active");$(t.dataset.t).classList.add("active");
+}));
 
-document.getElementById("btnReg").addEventListener("click", async () => {
-  const files = document.getElementById("fileReg").files;
-  const res = document.getElementById("resReg");
-  if (!files.length) { res.innerHTML = '<span class="empty">Selecciona una o varias imágenes.</span>'; return; }
-  const btn = document.getElementById("btnReg"); btn.disabled = true;
-  res.textContent = `Procesando ${files.length} foto(s) y subiendo al bucket...`;
-  const fd = new FormData();
-  for (const f of files) fd.append("files", f);
-  fd.append("nombre", document.getElementById("nombre").value);
-  fd.append("ci", document.getElementById("ci").value);
-  fd.append("estado", document.getElementById("estado").value || "desaparecida");
-  try {
-    const r = await fetch(API + "/personas", { method: "POST", body: fd });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || "Error");
-    res.innerHTML = `<span class="badge ok">Registrado</span> ${data.fotos.length} foto(s) · ID: <code>${data.person_id.slice(0,18)}…</code><br>
-      <a href="${data.fotos[0]}" target="_blank" style="color:var(--accent)">Ver imagen en el bucket ↗</a>`;
-  } catch (e) { res.innerHTML = '<span class="badge no">Error</span> ' + e.message; }
-  finally { btn.disabled = false; }
+$("r_menor").addEventListener("change",e=>{
+  $("r_menorcampos").style.display=e.target.checked?"block":"none";
+  $("r_adulto").style.display=e.target.checked?"none":"block";
 });
 
-document.getElementById("btnBus").addEventListener("click", async () => {
-  const f = document.getElementById("fileBus").files[0];
-  const res = document.getElementById("resBus");
-  if (!f) { res.innerHTML = '<span class="empty">Selecciona una imagen.</span>'; return; }
-  const btn = document.getElementById("btnBus"); btn.disabled = true; res.textContent = "Buscando coincidencias...";
-  const fd = new FormData(); fd.append("file", f); fd.append("limite", "25");
-  try {
-    const r = await fetch(API + "/buscar", { method: "POST", body: fd });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || "Error");
-    if (!data.coincidencias.length) { res.innerHTML = '<span class="empty">No hay personas registradas todavía.</span>'; return; }
-    res.innerHTML = `<p class="dist">${data.coincidencias.length} candidatos · ordenados por parecido · umbral de match: distancia &lt; ${data.umbral}</p>` +
-      data.coincidencias.map(c => {
-        const cls = c.confianza === 'alta' ? 'ok' : c.confianza === 'media' ? 'media' : 'no';
-        const txt = c.confianza === 'alta' ? '✓ COINCIDE (alta)'
-                  : c.confianza === 'media' ? '⚠ POSIBLE (revisar)'
-                  : '✗ no coincide';
-        return `
-        <div class="match">
-          <img src="${c.image_url}" onerror="this.style.opacity=.3" />
-          <div style="flex:1">
-            <span class="badge ${cls}">${txt}</span>
-            <div>${c.nombre || '<i>sin nombre</i>'} ${c.ci ? '· ' + c.ci : ''}</div>
-            <div class="dist">distancia: ${c.distancia.toFixed(4)} · confianza: ${c.confianza} · ${c.estado}</div>
-          </div>
-        </div>`; }).join("");
-  } catch (e) { res.innerHTML = '<span class="badge no">Error</span> ' + e.message; }
-  finally { btn.disabled = false; }
+function badge(c){return c.confianza==="alta"?'<span class="badge ok">ALTA</span>':c.confianza==="media"?'<span class="badge media">MEDIA</span>':'<span class="badge no">baja</span>'}
+function candHTML(c,i){
+  const titulo=c.es_menor?'<i>Menor protegido</i>':((c.nombre||'')+' '+(c.apellido||'')).trim()||'<i>sin nombre</i>';
+  return `<div class="match">
+    <img src="${c.image_url}" onerror="this.style.opacity=.3">
+    <div style="flex:1">
+      <span class="pct">${c.coincidencia}%</span> ${badge(c)}
+      <div>${titulo} ${c.edad?'· '+c.edad+' años':''}</div>
+      <div class="dim">Refugio: ${c.refugio||'—'} · distancia ${c.distancia}</div>
+      <button class="esmifam" onclick="document.getElementById('rev${i}').style.display='block'">Es mi familiar</button>
+      <div class="reveal" id="rev${i}">📍 Ubicación: <b>${c.ubicacion||'—'}</b><br>📞 Teléfono: <b>${c.telefono||'—'}</b></div>
+    </div></div>`;
+}
+
+$("f_btn").addEventListener("click",async()=>{
+  const files=$("f_file").files,res=$("f_res");
+  if(!files.length){res.innerHTML='Sube una foto.';return}
+  const b=$("f_btn");b.disabled=true;res.textContent="Buscando coincidencias...";
+  const fd=new FormData();for(const f of files)fd.append("files",f);
+  fd.append("nombre",$("f_nombre").value);fd.append("apellido",$("f_apellido").value);
+  fd.append("edad",$("f_edad").value);fd.append("doc_tipo",$("f_doctipo").value);
+  fd.append("doc_numero",$("f_docnum").value);fd.append("telefono_contacto",$("f_tel").value);
+  try{const r=await fetch(API+"/buscados",{method:"POST",body:fd});const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||"Error");
+    res.innerHTML=`<p class="dim">Búsqueda registrada (código <b>${d.codigo}</b>) · ${d.total} candidatos:</p>`+
+      (d.coincidencias.length?d.coincidencias.map(candHTML).join(""):'<span>Aún no hay encontrados que coincidan.</span>');
+  }catch(e){res.innerHTML='<span class="badge no">Error</span> '+e.message}finally{b.disabled=false}
+});
+
+$("r_btn").addEventListener("click",async()=>{
+  const files=$("r_file").files,res=$("r_res"),menor=$("r_menor").checked;
+  if(!files.length){res.innerHTML='Sube una foto.';return}
+  const b=$("r_btn");b.disabled=true;res.textContent="Registrando y verificando...";
+  const fd=new FormData();for(const f of files)fd.append("files",f);
+  fd.append("es_menor",menor);fd.append("doc_tipo",$("r_doctipo").value);fd.append("doc_numero",$("r_docnum").value);
+  fd.append("refugio",$("r_refugio").value);fd.append("ubicacion",$("r_ubic").value);
+  fd.append("telefono_responsable",$("r_telresp").value);
+  if(!menor){fd.append("nombre",$("r_nombre").value);fd.append("apellido",$("r_apellido").value);}
+  else{fd.append("doc_responsable",$("r_docresp").value);fd.append("descripcion",$("r_desc").value);}
+  try{const r=await fetch(API+"/encontrados",{method:"POST",body:fd});const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||"Error");
+    let h=`<div class="alerta" style="background:rgba(46,204,113,.12);border-color:var(--ok)">✅ Registrado. Código: <b>${d.codigo}</b></div>`;
+    if(d.alerta){h+=`<div class="alerta">🔔 <b>¡Un familiar ya buscaba a esta persona!</b> (${d.alerta.coincidencia}% ${d.alerta.confianza})<br>
+      👤 ${d.alerta.familiar_nombre||'(sin nombre)'} · 📞 ${d.alerta.familiar_telefono||'—'}
+      <div><img src="${d.alerta.image_url}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;margin-top:6px"></div></div>`;}
+    res.innerHTML=h;
+  }catch(e){res.innerHTML='<span class="badge no">Error</span> '+e.message}finally{b.disabled=false}
+});
+
+$("a_btn").addEventListener("click",async()=>{
+  const f=$("a_file").files[0],res=$("a_res");
+  if(!f){res.innerHTML='Sube una foto.';return}
+  const b=$("a_btn");b.disabled=true;res.textContent="Comparando contra la base...";
+  const fd=new FormData();fd.append("file",f);fd.append("limite","25");fd.append("estado",$("a_estado").value);
+  try{const r=await fetch(API+"/buscar",{method:"POST",body:fd});const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||"Error");
+    res.innerHTML=`<p class="dim">${d.length} resultados:</p>`+d.map((c,i)=>`<div class="match">
+      <img src="${c.image_url}" onerror="this.style.opacity=.3">
+      <div style="flex:1"><span class="pct">${c.coincidencia}%</span> ${badge(c)} <span class="dim">[${c.estado}]</span>
+      <div>${c.es_menor?'<i>Menor</i>':((c.nombre||'')+' '+(c.apellido||'')).trim()||'<i>sin nombre</i>'}</div>
+      <div class="dim">Refugio: ${c.refugio||'—'} · 📞 ${c.telefono||'—'} · dist ${c.distancia}</div></div></div>`).join("");
+  }catch(e){res.innerHTML='<span class="badge no">Error</span> '+e.message}finally{b.disabled=false}
 });
 </script>
 </body>

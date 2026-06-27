@@ -3,34 +3,65 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-class PersonaOut(BaseModel):
-    """Persona registrada (puede tener varias fotos)."""
+class Candidato(BaseModel):
+    """Una persona candidata de una búsqueda, con su grado de parecido."""
 
-    person_id: str = Field(..., description="Identificador de la persona.", examples=["3ad0cfd3-a08e-4c97-8cc5-1785051d09f0"])
-    nombre: str | None = Field(None, description="Nombre de la persona (opcional).", examples=["José Pérez"])
-    ci: str | None = Field(None, description="Cédula o documento de identidad (opcional).", examples=["V-12345678"])
-    rol: str | None = Field(None, description="Rol o nota libre (opcional).", examples=[None])
-    estado: str = Field(..., description="Estado: 'buscada' (un familiar la busca) o 'encontrada' (un rescatista la halló).", examples=["desaparecida"])
-    fotos: list[str] = Field(..., description="URLs públicas de las fotos de la persona en el bucket.")
-    created_at: datetime = Field(..., description="Fecha y hora de registro (UTC).")
-
-
-class Coincidencia(BaseModel):
-    """Persona candidata de una búsqueda, con su mejor foto coincidente."""
-
-    person_id: str = Field(..., description="Identificador de la persona.")
-    nombre: str | None = Field(None, description="Nombre de la persona.")
-    ci: str | None = Field(None, description="Cédula o documento de identidad.")
-    rol: str | None = Field(None, description="Rol o nota libre.")
-    estado: str = Field(..., description="Estado de la persona.")
-    image_url: str = Field(..., description="Foto registrada que mejor coincide con la búsqueda.")
-    distancia: float = Field(..., description="Distancia coseno (menor = más parecido; 0 = idéntico).", examples=[0.256])
-    es_match: bool = Field(..., description="True si la distancia está por debajo del umbral.", examples=[True])
-    confianza: str = Field(..., description="Nivel: 'alta' (casi seguro), 'media' (posible, revisar) o 'baja'.", examples=["alta"])
+    person_id: str
+    estado: str = Field(..., description="'buscada' o 'encontrada'.")
+    es_menor: bool = False
+    nombre: str | None = Field(None, description="Oculto si es menor (protocolo de protección).")
+    apellido: str | None = None
+    edad: str | None = None
+    refugio: str | None = Field(None, description="Refugio donde se encuentra (si fue encontrada).")
+    ubicacion: str | None = Field(None, description="Última ubicación conocida / dónde se encontró.")
+    telefono: str | None = Field(None, description="Teléfono de contacto para el reencuentro.")
+    descripcion: str | None = None
+    image_url: str
+    distancia: float = Field(..., description="Distancia coseno (menor = más parecido).")
+    coincidencia: int = Field(..., description="Porcentaje de coincidencia (0-100).")
+    confianza: str = Field(..., description="'alta' | 'media' | 'baja'.")
 
 
 class ResultadoBusqueda(BaseModel):
-    """Resultado de una búsqueda: una persona por candidato, ordenadas por parecido."""
+    """Respuesta del flujo FAMILIAR: su código + lista de candidatos."""
 
-    umbral: float = Field(..., description="Umbral de coincidencia (distancia < umbral = match).", examples=[0.55])
-    coincidencias: list[Coincidencia] = Field(..., description="Personas candidatas, de la más parecida a la menos.")
+    codigo: str = Field(..., description="Código del registro de búsqueda generado.")
+    total: int
+    coincidencias: list[Candidato]
+
+
+class AlertaFamiliar(BaseModel):
+    """Aviso cuando un RESCATISTA registra a alguien que un familiar ya buscaba."""
+
+    person_id: str
+    familiar_nombre: str | None = None
+    familiar_telefono: str | None = None
+    image_url: str
+    coincidencia: int
+    confianza: str
+
+
+class ResultadoRegistro(BaseModel):
+    """Respuesta del flujo RESCATISTA: código + posible alerta de coincidencia."""
+
+    codigo: str = Field(..., description="Código de registro generado.")
+    person_id: str
+    alerta: AlertaFamiliar | None = Field(None, description="Familiar que ya buscaba a esta persona, si hay match.")
+
+
+class PersonaAdmin(BaseModel):
+    """Vista de superadmin: registro con sus datos y fotos."""
+
+    person_id: str
+    estado: str
+    es_menor: bool
+    nombre: str | None = None
+    apellido: str | None = None
+    edad: str | None = None
+    doc: str | None = None
+    refugio: str | None = None
+    ubicacion: str | None = None
+    telefono: str | None = None
+    codigo: str | None = None
+    fotos: list[str]
+    created_at: datetime

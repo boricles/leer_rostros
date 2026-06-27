@@ -1,8 +1,11 @@
-"""Servicio FastAPI de reconocimiento facial para reencuentros de personas.
+"""Servicio FastAPI de reencuentros — dos flujos + superadmin.
 
-Una persona puede registrarse con VARIAS fotos (más ángulos = más probabilidad
-de encontrarla). Al buscar, se agrupa por persona y se devuelve su mejor
-coincidencia.
+- POST /buscados    (FAMILIAR)   registra una búsqueda y devuelve los encontrados
+                                 más parecidos (con % de coincidencia).
+- POST /encontrados (RESCATISTA) registra a una persona hallada y avisa si un
+                                 familiar ya la estaba buscando.
+- POST /buscar      (ADMIN)      compara una foto contra TODA la base.
+- GET  /admin/personas           lista todos los registros.
 """
 
 import uuid
@@ -10,209 +13,271 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
-# IMPORTANTE: psycopg (database) debe importarse ANTES que faces (TensorFlow),
-# o hay un crash nativo "free(): invalid pointer" por conflicto de librerías.
+# psycopg (database) ANTES que faces (TensorFlow) para evitar crash nativo.
 from app.config import get_settings
 from app.database import close_pool, get_pool, init_db
 from app import faces, storage
-from app.schemas import Coincidencia, PersonaOut, ResultadoBusqueda
+from app.schemas import (
+    AlertaFamiliar, Candidato, PersonaAdmin, ResultadoBusqueda, ResultadoRegistro,
+)
 
 CONTENT_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
-
-# Bandas de confianza calibradas para Facenet512 (misma persona <=0.469,
-# distintas >=0.549). Menor distancia = más parecido.
 CONF_ALTA = 0.40
 CONF_MEDIA = 0.50
 
+# columnas que devuelve la búsqueda por estado (orden fijo)
+_SEL = ("person_id, estado, es_menor, nombre, apellido, edad, refugio, ubicacion, "
+        "telefono_responsable, telefono_contacto, descripcion, image_url")
 
-def nivel_confianza(distancia: float) -> str:
-    if distancia < CONF_ALTA:
+
+def nivel_confianza(d: float) -> str:
+    if d < CONF_ALTA:
         return "alta"
-    if distancia < CONF_MEDIA:
+    if d < CONF_MEDIA:
         return "media"
     return "baja"
 
 
-DESCRIPTION = """
-API de **reconocimiento facial** para reunir personas desaparecidas con sus familias.
+def pct_coincidencia(d: float) -> int:
+    return max(0, min(100, round((1 - d / 1.2) * 100)))
 
-Cada foto se convierte en un **vector facial** (DeepFace **SFace + retinaface**) y se
-compara por **distancia coseno** sobre **Postgres + pgvector**. Las imágenes se guardan
-en **DigitalOcean Spaces**.
 
-### Flujo
-1. **Registrar** a la persona — puede subir **varias fotos** de la misma persona.
-2. **Buscar** coincidencias subiendo otra foto.
+def gen_codigo() -> str:
+    return "REE-" + uuid.uuid4().hex[:8].upper()
 
-### Interpretación
-- `distancia` menor = más parecido (0 = idéntico).
-- `confianza`: **alta** (<0.45), **media** (0.45–0.60, revisar) o **baja**.
-- Resultados **ordenados**; la decisión final la toma una persona.
-"""
 
-tags_metadata = [
-    {"name": "personas", "description": "Registrar y listar personas (con una o varias fotos)."},
-    {"name": "búsqueda", "description": "Reconocimiento facial: encontrar coincidencias por foto."},
-    {"name": "sistema", "description": "Estado y salud del servicio."},
-]
+async def _embedding_de_fotos(files: list[UploadFile]):
+    """Devuelve (lista de (bytes, content_type), embedding de la 1ª foto válida)."""
+    fotos, embedding = [], None
+    for f in files:
+        data = await f.read()
+        if not data:
+            continue
+        ct = f.content_type or "image/jpeg"
+        if embedding is None:
+            try:
+                embedding = faces.embedding_from_bytes(data)
+            except ValueError:
+                continue  # sin rostro: se omite
+        fotos.append((data, ct))
+    return fotos, embedding
+
+
+def _insertar_fotos(conn, person_id, datos: dict, fotos, embedding):
+    """Inserta una fila por foto (todas con el mismo person_id) y devuelve URLs."""
+    urls = []
+    for i, (data, ct) in enumerate(fotos):
+        ext = CONTENT_EXT.get(ct, "jpg")
+        foto_id = uuid.uuid4()
+        key = f"personas/{foto_id}.{ext}"
+        url = storage.upload_image(data, key, ct)
+        conn.execute(
+            """
+            INSERT INTO personas
+              (id, person_id, estado, es_menor, nombre, apellido, edad, doc_tipo,
+               doc_numero, telefono_contacto, refugio, telefono_responsable,
+               doc_responsable, descripcion, ubicacion, codigo, image_url, image_key, embedding)
+            VALUES (%(id)s, %(pid)s, %(estado)s, %(menor)s, %(nombre)s, %(apellido)s, %(edad)s,
+                    %(doc_tipo)s, %(doc_numero)s, %(tel_contacto)s, %(refugio)s, %(tel_resp)s,
+                    %(doc_resp)s, %(descripcion)s, %(ubicacion)s, %(codigo)s, %(url)s, %(key)s, %(emb)s)
+            """,
+            {**datos, "id": foto_id, "pid": person_id, "url": url, "key": key, "emb": embedding},
+        )
+        urls.append(url)
+    return urls
+
+
+def _buscar_por_estado(conn, embedding, estado: str, limite: int):
+    return conn.execute(
+        f"""
+        SELECT {_SEL}, distancia FROM (
+            SELECT DISTINCT ON (person_id) {_SEL}, embedding <=> %s AS distancia
+            FROM personas WHERE estado = %s
+            ORDER BY person_id, embedding <=> %s ASC
+        ) t ORDER BY distancia ASC LIMIT %s
+        """,
+        (embedding, estado, embedding, limite),
+    ).fetchall()
+
+
+def _fila_a_candidato(r) -> Candidato:
+    (person_id, estado, es_menor, nombre, apellido, edad, refugio, ubicacion,
+     tel_resp, tel_contacto, descripcion, image_url, distancia) = r
+    d = float(distancia)
+    return Candidato(
+        person_id=str(person_id), estado=estado, es_menor=bool(es_menor),
+        nombre=None if es_menor else nombre,  # protocolo de protección
+        apellido=None if es_menor else apellido, edad=edad,
+        refugio=refugio, ubicacion=ubicacion or refugio,
+        telefono=tel_resp or tel_contacto, descripcion=descripcion,
+        image_url=image_url, distancia=round(d, 4),
+        coincidencia=pct_coincidencia(d), confianza=nivel_confianza(d),
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     get_pool()
-    faces.warmup()  # pre-carga modelo + detector (evita cold start)
+    faces.warmup()
     yield
     close_pool()
 
 
+tags = [
+    {"name": "familiar", "description": "Flujo del familiar que busca a alguien."},
+    {"name": "rescatista", "description": "Flujo de quien encontró a una persona."},
+    {"name": "admin", "description": "Superadmin: buscar y comparar imágenes."},
+    {"name": "sistema", "description": "Estado del servicio."},
+]
+
 app = FastAPI(
     title="Reencuentros — Reconocimiento facial",
-    description=DESCRIPTION,
-    version="1.1.0",
-    openapi_tags=tags_metadata,
-    contact={"name": "Proyecto Reencuentros"},
-    license_info={"name": "Uso humanitario"},
-    lifespan=lifespan,
+    description="Reunir personas desaparecidas con sus familias mediante reconocimiento facial.",
+    version="2.0.0", openapi_tags=tags, lifespan=lifespan,
 )
 
 
 @app.get("/health", tags=["sistema"], summary="Estado del servicio")
 def health():
-    """Devuelve `{"status": "ok"}` si el servicio está operativo."""
     return {"status": "ok"}
 
 
-@app.post(
-    "/personas",
-    response_model=PersonaOut,
-    status_code=201,
-    tags=["personas"],
-    summary="Registrar una persona (una o varias fotos)",
-    response_description="La persona registrada con las URLs de sus fotos.",
-)
-async def registrar_persona(
-    files: list[UploadFile] = File(..., description="Una o varias fotos de la MISMA persona (JPEG/PNG/WebP)."),
-    nombre: str | None = Form(None, description="Nombre de la persona (opcional)."),
-    ci: str | None = Form(None, description="Cédula o documento (opcional)."),
-    rol: str | None = Form(None, description="Rol o nota libre (opcional)."),
-    estado: str = Form("desaparecida", description="'buscada' (la busca un familiar) o 'encontrada' (la halló un rescatista)."),
+@app.post("/buscados", response_model=ResultadoBusqueda, status_code=201, tags=["familiar"],
+          summary="Familiar: registrar búsqueda y ver coincidencias")
+async def registrar_busqueda(
+    files: list[UploadFile] = File(..., description="Foto(s) del rostro de la persona buscada (obligatorio)."),
+    nombre: str | None = Form(None), apellido: str | None = Form(None),
+    edad: str | None = Form(None), doc_tipo: str | None = Form(None),
+    doc_numero: str | None = Form(None),
+    telefono_contacto: str | None = Form(None, description="Teléfono del familiar para el reencuentro."),
 ):
-    """Registra una persona con una o varias fotos. Todas comparten un mismo
-    `person_id`; en la búsqueda basta con que UNA coincida para identificarla."""
+    fotos, embedding = await _embedding_de_fotos(files)
+    # --- Validaciones ---
+    if not fotos:
+        raise HTTPException(400, "Debes subir al menos una foto.")
+    if embedding is None:
+        raise HTTPException(422, "No se detectó ningún rostro en la(s) foto(s).")
+    if not (doc_numero or (nombre and nombre.strip())):
+        raise HTTPException(422, "Indica al menos el nombre o el número de identificación.")
+
     person_id = uuid.uuid4()
-    fotos: list[str] = []
-    created_at = None
-
+    codigo = gen_codigo()
+    datos = dict(estado="buscada", menor=False, nombre=nombre, apellido=apellido, edad=edad,
+                 doc_tipo=doc_tipo, doc_numero=doc_numero, tel_contacto=telefono_contacto,
+                 refugio=None, tel_resp=None, doc_resp=None, descripcion=None,
+                 ubicacion=None, codigo=codigo)
     with get_pool().connection() as conn:
-        for file in files:
-            data = await file.read()
-            content_type = file.content_type or "image/jpeg"
-            ext = CONTENT_EXT.get(content_type, "jpg")
-            try:
-                embedding = faces.embedding_from_bytes(data)
-            except ValueError:
-                continue  # foto ilegible: se omite, no rompe el registro
-
-            foto_id = uuid.uuid4()
-            key = f"personas/{foto_id}.{ext}"
-            image_url = storage.upload_image(data, key, content_type)
-            row = conn.execute(
-                """
-                INSERT INTO personas (id, person_id, nombre, ci, rol, estado, image_url, image_key, embedding)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING created_at
-                """,
-                (foto_id, person_id, nombre, ci, rol, estado, image_url, key, embedding),
-            ).fetchone()
-            created_at = row[0]
-            fotos.append(image_url)
+        _insertar_fotos(conn, person_id, datos, fotos, embedding)
+        encontrados = _buscar_por_estado(conn, embedding, "encontrada", 25)
         conn.commit()
 
-    if not fotos:
-        raise HTTPException(status_code=400, detail="Ninguna foto tenía un rostro procesable.")
-
-    return PersonaOut(
-        person_id=str(person_id), nombre=nombre, ci=ci, rol=rol,
-        estado=estado, fotos=fotos, created_at=created_at,
-    )
+    candidatos = [_fila_a_candidato(r) for r in encontrados]
+    return ResultadoBusqueda(codigo=codigo, total=len(candidatos), coincidencias=candidatos)
 
 
-@app.post(
-    "/buscar",
-    response_model=ResultadoBusqueda,
-    tags=["búsqueda"],
-    summary="Buscar coincidencias por foto",
-    response_description="Una persona por candidato, ordenadas por parecido.",
-)
-async def buscar(
-    file: UploadFile = File(..., description="Foto del rostro a buscar (JPEG/PNG/WebP)."),
-    limite: int = Form(10, description="Máximo de personas candidatas a devolver."),
+@app.post("/encontrados", response_model=ResultadoRegistro, status_code=201, tags=["rescatista"],
+          summary="Rescatista: registrar persona encontrada")
+async def registrar_encontrado(
+    files: list[UploadFile] = File(..., description="Foto(s) del rostro de la persona encontrada (obligatorio)."),
+    es_menor: bool = Form(False, description="Activar si es menor de edad (oculta datos sensibles)."),
+    nombre: str | None = Form(None), apellido: str | None = Form(None),
+    doc_tipo: str | None = Form(None), doc_numero: str | None = Form(None),
+    refugio: str | None = Form(None, description="Refugio donde se encuentra."),
+    ubicacion: str | None = Form(None, description="Dónde se encontró a la persona."),
+    telefono_responsable: str | None = Form(None, description="Teléfono del responsable."),
+    doc_responsable: str | None = Form(None, description="Identificación del responsable."),
+    descripcion: str | None = Form(None, description="Descripción física básica."),
 ):
-    """Calcula el vector de la foto y devuelve las personas más parecidas. Si una
-    persona tiene varias fotos, se toma su mejor coincidencia (una sola entrada)."""
+    fotos, embedding = await _embedding_de_fotos(files)
+    # --- Validaciones ---
+    if not fotos:
+        raise HTTPException(400, "Debes subir al menos una foto.")
+    if embedding is None:
+        raise HTTPException(422, "No se detectó ningún rostro en la(s) foto(s).")
+    if not refugio or not refugio.strip():
+        raise HTTPException(422, "El refugio actual es obligatorio.")
+    if not telefono_responsable or not telefono_responsable.strip():
+        raise HTTPException(422, "El teléfono del responsable es obligatorio.")
+    if es_menor and not (doc_responsable and doc_responsable.strip()):
+        raise HTTPException(422, "Para un menor, la identificación del responsable es obligatoria.")
+
+    person_id = uuid.uuid4()
+    codigo = gen_codigo()
+    datos = dict(estado="encontrada", menor=es_menor,
+                 nombre=None if es_menor else nombre,        # protocolo de protección
+                 apellido=None if es_menor else apellido,
+                 edad=None, doc_tipo=doc_tipo, doc_numero=doc_numero, tel_contacto=None,
+                 refugio=refugio, tel_resp=telefono_responsable, doc_resp=doc_responsable,
+                 descripcion=descripcion, ubicacion=ubicacion, codigo=codigo)
+    with get_pool().connection() as conn:
+        _insertar_fotos(conn, person_id, datos, fotos, embedding)
+        buscados = _buscar_por_estado(conn, embedding, "buscada", 1)
+        conn.commit()
+
+    alerta = None
+    if buscados:
+        r = buscados[0]
+        d = float(r[-1])
+        if d < CONF_MEDIA:  # coincidencia real (alta/media)
+            alerta = AlertaFamiliar(
+                person_id=str(r[0]), familiar_nombre=r[3], familiar_telefono=r[9],
+                image_url=r[11], coincidencia=pct_coincidencia(d), confianza=nivel_confianza(d),
+            )
+    return ResultadoRegistro(codigo=codigo, person_id=str(person_id), alerta=alerta)
+
+
+@app.post("/buscar", response_model=list[Candidato], tags=["admin"],
+          summary="Superadmin: comparar una foto contra TODA la base")
+async def buscar_admin(
+    file: UploadFile = File(...),
+    limite: int = Form(25),
+    estado: str | None = Form(None, description="Filtrar por 'buscada' o 'encontrada' (vacío = todas)."),
+):
     data = await file.read()
     try:
         embedding = faces.embedding_from_bytes(data)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    s = get_settings()
+        raise HTTPException(422, str(e))
+    filtra = estado in ("buscada", "encontrada")
+    where = "WHERE estado = %s" if filtra else ""
+    params = (embedding, estado, embedding, limite) if filtra else (embedding, embedding, limite)
     with get_pool().connection() as conn:
         rows = conn.execute(
-            """
-            SELECT person_id, nombre, ci, rol, estado, image_url, distancia FROM (
-                SELECT DISTINCT ON (person_id)
-                       person_id, nombre, ci, rol, estado, image_url,
-                       embedding <=> %s AS distancia
-                FROM personas
+            f"""
+            SELECT {_SEL}, distancia FROM (
+                SELECT DISTINCT ON (person_id) {_SEL}, embedding <=> %s AS distancia
+                FROM personas {where}
                 ORDER BY person_id, embedding <=> %s ASC
-            ) mejor_por_persona
-            ORDER BY distancia ASC
-            LIMIT %s
+            ) t ORDER BY distancia ASC LIMIT %s
             """,
-            (embedding, embedding, limite),
+            params,
         ).fetchall()
-
-    coincidencias = [
-        Coincidencia(
-            person_id=str(r[0]), nombre=r[1], ci=r[2], rol=r[3], estado=r[4],
-            image_url=r[5], distancia=float(r[6]),
-            es_match=float(r[6]) < s.match_threshold,
-            confianza=nivel_confianza(float(r[6])),
-        )
-        for r in rows
-    ]
-    return ResultadoBusqueda(umbral=s.match_threshold, coincidencias=coincidencias)
+    return [_fila_a_candidato(r) for r in rows]
 
 
-@app.get(
-    "/personas",
-    response_model=list[PersonaOut],
-    tags=["personas"],
-    summary="Listar personas registradas",
-    response_description="Personas registradas (con todas sus fotos), de la más reciente a la más antigua.",
-)
-def listar_personas(limite: int = 50):
-    """Lista las personas registradas, agrupando las fotos de cada una."""
+@app.get("/admin/personas", response_model=list[PersonaAdmin], tags=["admin"],
+         summary="Superadmin: listar registros")
+def listar(limite: int = 100, estado: str | None = None):
+    where = "WHERE estado = %s" if estado in ("buscada", "encontrada") else ""
+    args = ([estado] if where else []) + [limite]
     with get_pool().connection() as conn:
         rows = conn.execute(
-            """
-            SELECT person_id,
-                   max(nombre) AS nombre, max(ci) AS ci, max(rol) AS rol,
-                   max(estado) AS estado, array_agg(image_url) AS fotos,
-                   min(created_at) AS created_at
-            FROM personas
-            GROUP BY person_id
-            ORDER BY min(created_at) DESC
-            LIMIT %s
+            f"""
+            SELECT person_id, max(estado), bool_or(es_menor), max(nombre), max(apellido),
+                   max(edad), max(doc_numero), max(refugio), max(ubicacion),
+                   coalesce(max(telefono_responsable), max(telefono_contacto)),
+                   max(codigo), array_agg(image_url), min(created_at)
+            FROM personas {where}
+            GROUP BY person_id ORDER BY min(created_at) DESC LIMIT %s
             """,
-            (limite,),
+            tuple(args),
         ).fetchall()
     return [
-        PersonaOut(
-            person_id=str(r[0]), nombre=r[1], ci=r[2], rol=r[3],
-            estado=r[4], fotos=list(r[5]), created_at=r[6],
+        PersonaAdmin(
+            person_id=str(r[0]), estado=r[1], es_menor=bool(r[2]), nombre=r[3], apellido=r[4],
+            edad=r[5], doc=r[6], refugio=r[7], ubicacion=r[8], telefono=r[9], codigo=r[10],
+            fotos=list(r[11]), created_at=r[12],
         )
         for r in rows
     ]
