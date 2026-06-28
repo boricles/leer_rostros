@@ -9,9 +9,9 @@ import pytest
 from app.domain.matching import MatchingPolicy
 from app.domain.persona import Estado, PersonaBase
 from app.schemas import ResultadoBusqueda
-from app.use_cases import RegistrarBusqueda
-from app.use_cases._exceptions import PersonaValidationError, RostroNoDetectadoError
-from tests.repositories.fake import FakePersonaRepository
+from app.personas.use_cases import RegistrarBusqueda
+from app.shared._exceptions import PersonaValidationError, RostroNoDetectadoError
+from tests.personas.repositories.fake import FakePersonaRepository
 
 
 @pytest.fixture(autouse=True)

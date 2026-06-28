@@ -1,7 +1,7 @@
 """ModerarPersona use case: ADMIN moderation flow."""
 
-from app.repositories.persona import PersonaRepository
-from app.use_cases._exceptions import ModificacionInvalidaError, PersonaNotFoundError
+from app.personas.repositories.persona import PersonaRepository
+from app.shared._exceptions import ModificacionInvalidaError, PersonaNotFoundError
 
 
 VALID_MODERACION = ("aprobada", "rechazada", "pendiente")

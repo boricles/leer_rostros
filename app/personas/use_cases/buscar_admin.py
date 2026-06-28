@@ -3,9 +3,9 @@
 from typing import Any
 
 from app.domain.privacy import MenoresPrivacy
-from app.repositories.persona import PersonaRepository
+from app.personas.repositories.persona import PersonaRepository
 from app.schemas import Candidato
-from app.use_cases._helpers import LIMITE_MAX
+from app.shared._helpers import LIMITE_MAX
 
 
 class BuscarAdmin:

@@ -26,27 +26,47 @@ Config in `.env` (see `app/config.py`):
 
 ```
 app/
-  main.py            # FastAPI endpoints: /buscados, /encontrados, /buscar, /admin/*
-  domain/
-    matching.py      # MatchingPolicy: threshold, confidence bands, percentage (sigmoid)
-    privacy.py       # MenoresPrivacy: masks minor names in API responses
-    persona.py       # Estado enum, Foto dataclass, PersonaBase model
-  repositories/
-    persona.py       # PersonaRepository: all SQL for personas + persona_embeddings
-  auth.py            # JWT + bcrypt, admins table, get_current_admin dependency
-  cli.py             # CLI for admin management (create/list/delete)
-  schemas.py         # Pydantic models: Candidato, PersonaAdmin, AlertaFamiliar, etc.
-  config.py          # Settings via pydantic-settings
-  database.py        # init_db() with pgvector + admins table
-  faces.py           # InsightFace buffalo_l: detection + embedding + augmentations
-  storage.py         # Image upload/download (Spaces or local fallback)
+  main.py                  # FastAPI endpoints + lifespan + acceso a policy/repos
+  domain/                  # lógica de dominio pura (sin SQL ni HTTP)
+    matching.py            #   MatchingPolicy
+    privacy.py             #   MenoresPrivacy
+    persona.py             #   Estado enum, PersonaBase
+  shared/                  # ⭐ utilidades compartidas por bounded contexts
+    _exceptions.py         #   PersonaValidationError, PersonaNotFoundError, …
+    _helpers.py            #   LIMITE_MAX, _gen_codigo, _embedding_consulta
+  personas/                # ⭐ bounded context: personas + persona_embeddings
+    repositories/
+      persona.py           #   PersonaRepository: SQL de personas + embeddings
+    use_cases/
+      registrar_busqueda.py
+      registrar_encontrado.py
+      buscar_admin.py
+      listar_personas_admin.py
+      moderar_persona.py
+      eliminar_persona.py
+  reportes/                # ⭐ bounded context: tabla reportes
+    repositories/
+      reporte.py           #   ReporteRepository: SQL de reportes
+    use_cases/
+      registrar_falla.py
+      registrar_publicacion.py
+      listar_reportes_admin.py
+      cambiar_estado_reporte.py
+  auth.py                  # JWT + bcrypt, admins table, get_current_admin
+  cli.py                   # CLI for admin management
+  schemas.py               # Pydantic models
+  config.py                # Settings via pydantic-settings
+  database.py              # init_db() with pgvector + admins table
+  faces.py                 # InsightFace buffalo_l
+  storage.py               # Image upload/download (Spaces or local fallback)
 ```
 
 ### Main flows
 
 1. **FAMILIAR** (`POST /buscados`): Uploads photo of missing person, searches among found persons. Returns ranked candidates.
 2. **RESCATISTA** (`POST /encontrados`): Registers a found person. If a familiar was already searching, generates `AlertaFamiliar`.
-3. **ADMIN** (`POST /buscar`, `GET /admin/personas`, `PATCH .../moderacion`, `DELETE`): Requires Bearer token. Search, list, moderate, delete.
+3. **PUBLIC REPORTES** (`POST /reportes/falla`, `POST /reportes/publicacion`): Anyone can report a bug or an inadequate publication.
+4. **ADMIN** (`POST /buscar`, `GET /admin/personas`, `PATCH .../moderacion`, `DELETE`, `GET /admin/reportes`, `PATCH /admin/reportes/{id}/estado`): Requires Bearer token.
 
 ### Privacy protocol
 

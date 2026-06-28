@@ -5,10 +5,10 @@ from uuid import uuid4
 from app.domain.matching import MatchingPolicy
 from app.domain.persona import Estado, PersonaBase
 from app.domain.privacy import MenoresPrivacy
-from app.repositories.persona import PersonaRepository
+from app.personas.repositories.persona import PersonaRepository
 from app.schemas import Candidato, ResultadoBusqueda
-from app.use_cases._exceptions import PersonaValidationError, RostroNoDetectadoError
-from app.use_cases._helpers import LIMITE_MAX, ProcessedPhotos, _embedding_consulta, _gen_codigo
+from app.shared._exceptions import PersonaValidationError, RostroNoDetectadoError
+from app.shared._helpers import LIMITE_MAX, ProcessedPhotos, _embedding_consulta, _gen_codigo
 
 
 class RegistrarBusqueda:

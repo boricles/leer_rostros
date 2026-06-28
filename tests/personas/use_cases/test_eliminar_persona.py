@@ -7,9 +7,9 @@ from uuid import uuid4
 import pytest
 
 from app.domain.persona import Estado, PersonaBase
-from app.use_cases import EliminarPersona
-from app.use_cases._exceptions import PersonaNotFoundError
-from tests.repositories.fake import FakePersonaRepository
+from app.personas.use_cases import EliminarPersona
+from app.shared._exceptions import PersonaNotFoundError
+from tests.personas.repositories.fake import FakePersonaRepository
 
 
 @pytest.fixture(autouse=True)

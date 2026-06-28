@@ -1,7 +1,7 @@
 """ListarPersonasAdmin use case: ADMIN list flow."""
 
 from app.domain.privacy import MenoresPrivacy
-from app.repositories.persona import PersonaRepository
+from app.personas.repositories.persona import PersonaRepository
 from app.schemas import PersonaAdmin
 
 

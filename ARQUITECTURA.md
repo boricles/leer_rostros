@@ -65,7 +65,7 @@ Despliegue reproducible con **docker-compose** (ver `DOCKER.md` y `DEPLOY.md`).
 
 ```
 app/
-  main.py              # FastAPI: endpoints + lifespan + acceso a policy/repo
+  main.py              # FastAPI: endpoints + lifespan + acceso a policy/repos
   config.py            # Settings (pydantic-settings), cargado desde .env
   database.py          # psycopg pool, init_db, pgvector, HNSW, tabla admins
   faces.py             # InsightFace buffalo_l: detección + embedding + augmentaciones
@@ -78,35 +78,57 @@ app/
     matching.py        #   MatchingPolicy (is_match, confidence_band, match_percentage)
     privacy.py         #   MenoresPrivacy (mask de nombres de menores)
     persona.py         #   Estado enum, Foto dataclass, PersonaBase model
-  repositories/        # capa: toda la SQL del modelo
+  shared/              # ⭐ utilidades compartidas por bounded contexts
     __init__.py        #   barrel
-    persona.py         #   PersonaRepository: SQL de personas + persona_embeddings
-  use_cases/           # ⭐ capa: una clase por flujo de negocio
-    __init__.py        #   barrel (re-exporta las 6 clases)
     _exceptions.py     #   excepciones de dominio (PersonaValidationError, …)
     _helpers.py        #   LIMITE_MAX, _gen_codigo, _embedding_consulta
-    registrar_busqueda.py     #   POST /buscados (FAMILIAR)
-    registrar_encontrado.py   #   POST /encontrados (RESCATISTA) + alerta
-    buscar_admin.py           #   POST /buscar (ADMIN)
-    listar_personas_admin.py  #   GET /admin/personas
-    moderar_persona.py        #   PATCH …/moderacion
-    eliminar_persona.py       #   DELETE …/{person_id}
+  personas/            # ⭐ bounded context: personas + persona_embeddings
+    __init__.py        #   barrel
+    repositories/
+      __init__.py
+      persona.py       #   PersonaRepository: SQL de personas + persona_embeddings
+    use_cases/         #   una clase por flujo de negocio
+      __init__.py
+      registrar_busqueda.py     #   POST /buscados (FAMILIAR)
+      registrar_encontrado.py   #   POST /encontrados (RESCATISTA) + alerta
+      buscar_admin.py           #   POST /buscar (ADMIN)
+      listar_personas_admin.py  #   GET /admin/personas
+      moderar_persona.py        #   PATCH …/moderacion
+      eliminar_persona.py       #   DELETE …/{person_id}
+  reportes/            # ⭐ bounded context: tabla reportes (falla + publicacion)
+    __init__.py        #   barrel
+    repositories/
+      __init__.py
+      reporte.py       #   ReporteRepository: SQL de la tabla reportes
+    use_cases/
+      __init__.py
+      registrar_falla.py         #   POST /reportes/falla
+      registrar_publicacion.py   #   POST /reportes/publicacion
+      listar_reportes_admin.py   #   GET /admin/reportes
+      cambiar_estado_reporte.py  #   PATCH /admin/reportes/{id}/estado
 tests/
   conftest.py          # fixtures: client, policy, admin_token, admin_headers
   domain/
     test_matching.py   # 14 tests, 100% coverage
-    test_privacy.py    # 8 tests, 100% coverage
-  use_cases/           # ⭐ tests de la capa use_cases (46 tests)
-    __init__.py
-    test_registrar_busqueda.py
-    test_registrar_encontrado.py
-    test_buscar_admin.py
-    test_listar_personas_admin.py
-    test_moderar_persona.py
-    test_eliminar_persona.py
-  repositories/        # fake in-memory del repo, solo para tests
-    __init__.py
-    fake.py            #   FakePersonaRepository (test-only)
+    test_privacy.py    # 7 tests, 100% coverage
+  personas/            # tests del bounded context personas
+    use_cases/         # ⭐ 62 tests, 100% coverage
+      test_registrar_busqueda.py
+      test_registrar_encontrado.py
+      test_buscar_admin.py
+      test_listar_personas_admin.py
+      test_moderar_persona.py
+      test_eliminar_persona.py
+    repositories/
+      fake.py          #   FakePersonaRepository (test-only)
+  reportes/            # tests del bounded context reportes
+    use_cases/         # ⭐ 39 tests, 100% coverage
+      test_registrar_falla.py
+      test_registrar_publicacion.py
+      test_listar_reportes_admin.py
+      test_cambiar_estado_reporte.py
+    repositories/
+      fake.py          #   FakeReporteRepository (test-only)
 ```
 
 ### 3.1 Domain layer (`app/domain/`)
@@ -126,10 +148,13 @@ Lógica de negocio **sin SQL ni HTTP**. Tres módulos:
   y `Foto` dataclass. Es el modelo interno; las respuestas usan `Candidato` /
   `PersonaAdmin` / `AlertaFamiliar` de `app/schemas.py`.
 
-### 3.2 Repository layer (`app/repositories/`)
+### 3.2 Repository layer (`app/personas/repositories/`, `app/reportes/repositories/`)
 
-Toda la SQL de las tablas `personas` y `persona_embeddings` vive en
-`PersonaRepository`. `app/main.py` no contiene SQL de estas tablas. Operaciones:
+La capa de repositorios está organizada **por bounded context**. `app/main.py`
+no contiene SQL de ninguna tabla.
+
+**`PersonaRepository`** (`app/personas/repositories/persona.py`) — toda la SQL
+de las tablas `personas` y `persona_embeddings`. Operaciones:
 
 - `add(person_id, datos, procesadas)` — inserta una fila por foto en `personas` y
   N embeddings por foto en `persona_embeddings` (base + rotaciones ±15°).
@@ -146,13 +171,34 @@ Los métodos de mapeo `_row_to_candidato_dict` / `_row_to_admin_dict` calculan
 `coincidencia` y `confianza` a través del `MatchingPolicy` inyectado. **No**
 aplican privacidad: `MenoresPrivacy` se invoca en el handler del endpoint.
 
-### 3.3 Use case layer (`app/use_cases/`)
+**`ReporteRepository`** (`app/reportes/repositories/reporte.py`) — toda la SQL
+de la tabla `reportes`. Cubre los dos flujos de reporte:
 
-Una clase por flujo de negocio. Los endpoints de `app/main.py` se vuelven
-**adaptadores HTTP delgados** (≤20 líneas): parsean form / query / path,
-llaman a `use_case.execute(...)`, y devuelven el modelo Pydantic. La
-orquestación (validación, construcción de `PersonaBase`, llamadas al repo,
-aplicación de `MenoresPrivacy`, ensamblado de la respuesta) vive en el use case.
+- `add_falla(descripcion, url, contacto)` — inserta un reporte de tipo `falla`
+  (sin `person_id`).
+- `add_publicacion(descripcion, person_id, contacto)` — inserta un reporte
+  de tipo `publicacion` (el caller debe haber verificado que el `person_id`
+  existe vía `persona_exists`).
+- `persona_exists(person_id)` — verifica que la publicación objetivo existe
+  en `personas` (un LEFT JOIN a la primera fila con ese `person_id`).
+- `list_admin(tipo, estado, limite)` — listado admin con `LEFT JOIN LATERAL`
+  para traer el snapshot de la publicación reportada (nombre, image_url,
+  estado, moderación). Valores de `tipo`/`estado` fuera del conjunto válido
+  se ignoran silenciosamente (comportamiento heredado del endpoint original).
+- `set_estado(reporte_id, estado)` — actualiza el estado de un reporte
+  (`pendiente` | `revisado` | `resuelto` | `descartado`). Retorna el rowcount
+  (0 = no existe, 1 = actualizado).
+
+### 3.3 Use case layer (`app/personas/use_cases/`, `app/reportes/use_cases/`)
+
+La capa de use cases también está organizada **por bounded context**. Una clase
+por flujo de negocio. Los endpoints de `app/main.py` se vuelven **adaptadores
+HTTP delgados** (≤20 líneas): parsean form / query / path, llaman a
+`use_case.execute(...)`, y devuelven el modelo Pydantic. La orquestación
+(validación, construcción de `PersonaBase`, llamadas al repo, aplicación de
+`MenoresPrivacy`, ensamblado de la respuesta) vive en el use case.
+
+**Bounded context `personas`:**
 
 | Use case | Endpoint | Responsabilidad |
 |---|---|---|
@@ -163,12 +209,21 @@ aplicación de `MenoresPrivacy`, ensamblado de la respuesta) vive en el use case
 | `ModerarPersona` | `PATCH /admin/personas/{id}/moderacion` | valida `valor ∈ {aprobada, rechazada, pendiente}`, `repo.set_moderacion`, devuelve `{person_id, moderacion, fotos_actualizadas}` |
 | `EliminarPersona` | `DELETE /admin/personas/{person_id}` | `repo.delete`, devuelve `{person_id, eliminada, fotos}` |
 
-`admin_login` (`POST /admin/login`) y `GET /health` se quedan **en `app/main.py`**
-por decisión explícita (no tocan `PersonaRepository`; extraerlos no aporta).
+**Bounded context `reportes`:**
 
-**Excepciones de dominio.** El módulo `_exceptions.py` define 4 excepciones que
-los use cases elevan; el helper `_use_case_execute` en `app/main.py` las mapea
-a HTTP en el endpoint:
+| Use case | Endpoint | Responsabilidad |
+|---|---|---|
+| `RegistrarFalla` | `POST /reportes/falla` | valida `descripcion` (no vacía tras strip), `repo.add_falla`, devuelve `ReporteCreado` |
+| `RegistrarPublicacion` | `POST /reportes/publicacion` | valida `person_id` (UUID, existente), `repo.persona_exists` + `repo.add_publicacion`, devuelve `ReporteCreado` |
+| `ListarReportesAdmin` | `GET /admin/reportes` | `repo.list_admin` con filtros opcionales de `tipo`/`estado`, devuelve `list[ReporteAdmin]` |
+| `CambiarEstadoReporte` | `PATCH /admin/reportes/{id}/estado` | valida `valor ∈ {pendiente, revisado, resuelto, descartado}` y `reporte_id` (UUID existente), `repo.set_estado`, devuelve `{id, estado}` |
+
+`admin_login` (`POST /admin/login`) y `GET /health` se quedan **en `app/main.py`**
+por decisión explícita (no tocan ningún repository; extraerlos no aporta).
+
+**Excepciones de dominio.** El módulo `app/shared/_exceptions.py` define 4
+excepciones que los use cases elevan; el helper `_use_case_execute` en
+`app/main.py` las mapea a HTTP en el endpoint:
 
 | Excepción | HTTP |
 |---|---|
@@ -176,6 +231,12 @@ a HTTP en el endpoint:
 | `RostroNoDetectadoError` | 422 |
 | `PersonaNotFoundError` | 404 (mensaje por defecto: *"No existe esa persona"*) |
 | `ModificacionInvalidaError` | 400 |
+
+> El nombre `PersonaNotFoundError` aplica a ambos bounded contexts: lo usa
+> `EliminarPersona` y `ModerarPersona` (personas), y `RegistrarPublicacion` /
+> `CambiarEstadoReporte` (reportes). En el caso de reportes el mensaje se
+> ajusta para preservar el contrato HTTP del endpoint original
+> (`"No existe la publicación..."` o `"No existe ese reporte"`).
 
 Los use cases **nunca** importan `HTTPException` ni `fastapi`; la capa HTTP
 queda afuera del negocio.
@@ -187,12 +248,13 @@ parámetro SQL (`persona.es_menor → %(menor)s`, `persona.telefono_contacto →
 %(tel_contacto)s`, etc.). Los endpoints ya no construyen el `datos` en español
 a mano: lo arma el use case.
 
-**Testeable sin InsightFace ni PostgreSQL.** `tests/repositories/fake.py`
-provee `FakePersonaRepository`, una implementación in-memory que respeta la
-misma interfaz pública que el repo real (`add`, `search_by_estado`,
-`search_admin`, `list_admin`, `set_moderacion`, `delete`). Es **solo** para
-tests — el código de `app/` no la importa. La cobertura de
-`app/use_cases/` es **100%** y los tests corren en milisegundos.
+**Testeable sin InsightFace ni PostgreSQL.** `tests/personas/repositories/fake.py`
+provee `FakePersonaRepository` y `tests/reportes/repositories/fake.py` provee
+`FakeReporteRepository` — implementaciones in-memory que respetan la misma
+interfaz pública que los repos reales. Son **solo** para tests — el código de
+`app/` no las importa. La cobertura de
+`app/personas/use_cases/`, `app/reportes/use_cases/` y `app/shared/` es
+**100%** y los tests corren en milisegundos.
 
 ---
 
@@ -363,11 +425,15 @@ desde `PATCH /admin/personas/{id}/moderacion`.
 | `GET` | `/health` | — | Estado del servicio |
 | `POST` | `/buscados` | — | **FAMILIAR**: registra búsqueda y devuelve encontrados similares |
 | `POST` | `/encontrados` | — | **RESCATISTA**: registra persona encontrada y emite alerta si hay match |
+| `POST` | `/reportes/falla` | — | Cualquier usuario: reportar un bug/falla de la web |
+| `POST` | `/reportes/publicacion` | — | Cualquier usuario: reportar una publicación/foto inadecuada (por `person_id`) |
 | `POST` | `/admin/login` | — | Login. Devuelve JWT firmado (HS256) |
 | `POST` | `/buscar` | Bearer | **ADMIN**: comparar una foto contra TODA la base (sin filtro de moderación) |
 | `GET` | `/admin/personas` | Bearer | **ADMIN**: listar registros (filtros `estado`, `moderacion`) |
 | `PATCH` | `/admin/personas/{id}/moderacion` | Bearer | **ADMIN**: aprobar / rechazar / marcar pendiente |
 | `DELETE` | `/admin/personas/{id}` | Bearer | **ADMIN**: borrar (limpia storage) |
+| `GET` | `/admin/reportes` | Bearer | **ADMIN**: listar reportes (filtros `tipo`, `estado`) |
+| `PATCH` | `/admin/reportes/{id}/estado` | Bearer | **ADMIN**: cambiar el estado de un reporte |
 
 Errores frecuentes en endpoints protegidos:
 
@@ -436,58 +502,66 @@ Cuentas de superadmin. El password **nunca** en plano: vive como hash bcrypt.
 
 ```
 app/
-  main.py              # FastAPI: endpoints + lifespan + acceso a policy/repo
+  main.py              # FastAPI: endpoints + lifespan + acceso a policy/repos
   config.py            # pydantic-settings Settings class
   database.py          # psycopg pool, init_db, pgvector, HNSW, tabla admins
   faces.py             # InsightFace buffalo_l (detección + embedding + warmup)
   storage.py           # boto3 (Spaces) con fallback a /data/fotos local
   auth.py              # JWT + bcrypt + guard get_current_admin
   cli.py               # gestión de admins
-  schemas.py           # Pydantic: LoginBody, Candidato, AlertaFamiliar, …
-  domain/              # lógica de dominio pura
+  schemas.py           # Pydantic: LoginBody, Candidato, AlertaFamiliar, Reporte*, …
+  domain/              # lógica de dominio pura (sin SQL ni HTTP)
     matching.py
     privacy.py
     persona.py
-  repositories/        # toda la SQL de personas / persona_embeddings
-    persona.py
-  use_cases/           # ⭐ una clase por flujo de negocio (ver §3.3)
-    __init__.py        #   barrel
-    _exceptions.py     #   excepciones de dominio
+  shared/              # ⭐ utilidades compartidas por bounded contexts
+    _exceptions.py     #   PersonaValidationError, PersonaNotFoundError, …
     _helpers.py        #   LIMITE_MAX, _gen_codigo, _embedding_consulta
-    registrar_busqueda.py
-    registrar_encontrado.py
-    buscar_admin.py
-    listar_personas_admin.py
-    moderar_persona.py
-    eliminar_persona.py
+  personas/            # ⭐ bounded context: personas + persona_embeddings
+    repositories/
+      persona.py       #   PersonaRepository: SQL de personas + persona_embeddings
+    use_cases/         #   una clase por flujo de negocio (ver §3.3)
+      registrar_busqueda.py
+      registrar_encontrado.py
+      buscar_admin.py
+      listar_personas_admin.py
+      moderar_persona.py
+      eliminar_persona.py
+  reportes/            # ⭐ bounded context: tabla reportes (falla + publicacion)
+    repositories/
+      reporte.py       #   ReporteRepository: SQL de reportes
+    use_cases/
+      registrar_falla.py
+      registrar_publicacion.py
+      listar_reportes_admin.py
+      cambiar_estado_reporte.py
 frontend/
   index.html           # SPA single-file (3 pestañas)
 tests/
-  conftest.py          # fixtures
+  conftest.py          # fixtures (client, policy, admin_token, admin_headers)
   domain/
     test_matching.py   # 14 tests
-    test_privacy.py    # 8 tests
-  use_cases/           # ⭐ 46 tests sobre la capa de use cases
-    __init__.py
-    test_registrar_busqueda.py
-    test_registrar_encontrado.py
-    test_buscar_admin.py
-    test_listar_personas_admin.py
-    test_moderar_persona.py
-    test_eliminar_persona.py
-  repositories/        # fake in-memory del repo (test-only)
-    __init__.py
-    fake.py
+    test_privacy.py    # 7 tests
+  personas/            # tests del bounded context personas
+    use_cases/         # ⭐ 62 tests, 100% coverage
+      test_registrar_busqueda.py
+      test_registrar_encontrado.py
+      test_buscar_admin.py
+      test_listar_personas_admin.py
+      test_moderar_persona.py
+      test_eliminar_persona.py
+    repositories/
+      fake.py          #   FakePersonaRepository (test-only)
+  reportes/            # tests del bounded context reportes
+    use_cases/         # ⭐ 39 tests, 100% coverage
+      test_registrar_falla.py
+      test_registrar_publicacion.py
+      test_listar_reportes_admin.py
+      test_cambiar_estado_reporte.py
+    repositories/
+      fake.py          #   FakeReporteRepository (test-only)
 openspec/
   changes/             # cambios activos + change artifacts
-    use-case/          # change vigente (próximo a archivar)
-      proposal.md
-      specs/use-case/spec.md
-      design.md
-      tasks.md
-      verify-report.md
-      apply-progress.md
-      sync-report.md
   specs/               # ⭐ specs canónicas (sync target)
     core-domain/spec.md
     use-case/spec.md
@@ -513,27 +587,34 @@ CLAUDE.md / AGENTS.md  # guía para colaboradores
 
 - **Runner**: `pytest` (no strict TDD; tests junto al código).
 - **Cobertura**:
-  - `app/domain/` — **100%** (62/62 statements) — preservado.
-  - `app/use_cases/` — **100%** (136/136 statements en las 6 clases + helpers +
-    exceptions + barrel).
-  - `app/repositories/` — 28% (cubre el fake; tests de integración con
-    PostgreSQL + pgvector reales diferidos).
-- **Tests acumulados** (68 totales):
+  - `app/domain/` — **100%** (preservado).
+  - `app/personas/use_cases/` — **100%**.
+  - `app/reportes/use_cases/` — **100%**.
+  - `app/shared/` — **100%** (`_exceptions.py` + `_helpers.py`).
+  - `app/personas/repositories/persona.py` — 29% (cubre el fake; tests de
+    integración con PostgreSQL + pgvector reales diferidos).
+  - `app/reportes/repositories/reporte.py` — 35% (mismo motivo).
+- **Tests acumulados** (100 totales):
   - `tests/domain/test_matching.py` — 14 tests (umbral, bandas, sigmoide).
-  - `tests/domain/test_privacy.py` — 8 tests (mask Candidato, PersonaAdmin, AlertaFamiliar).
-  - `tests/use_cases/test_registrar_busqueda.py` — 13 tests (FAMILIAR).
-  - `tests/use_cases/test_registrar_encontrado.py` — 12 tests (RESCATISTA + alerta).
-  - `tests/use_cases/test_buscar_admin.py` — 5 tests (admin search).
-  - `tests/use_cases/test_listar_personas_admin.py` — 6 tests (admin list).
-  - `tests/use_cases/test_moderar_persona.py` — 6 tests (moderación).
-  - `tests/use_cases/test_eliminar_persona.py` — 4 tests (delete).
-- **Fake in-memory** en `tests/repositories/fake.py` (`FakePersonaRepository`):
-  implementa la misma interfaz pública que el repo real. **Test-only**;
-  el código de `app/` nunca la importa. Permite que los use-case tests
-  corran en milisegundos, sin InsightFace ni PostgreSQL.
+  - `tests/domain/test_privacy.py` — 7 tests (mask Candidato, PersonaAdmin, AlertaFamiliar).
+  - `tests/personas/use_cases/test_registrar_busqueda.py` — 13 tests (FAMILIAR).
+  - `tests/personas/use_cases/test_registrar_encontrado.py` — 12 tests (RESCATISTA + alerta).
+  - `tests/personas/use_cases/test_buscar_admin.py` — 5 tests (admin search).
+  - `tests/personas/use_cases/test_listar_personas_admin.py` — 8 tests (admin list).
+  - `tests/personas/use_cases/test_moderar_persona.py` — 6 tests (moderación).
+  - `tests/personas/use_cases/test_eliminar_persona.py` — 4 tests (delete).
+  - `tests/reportes/use_cases/test_registrar_falla.py` — 5 tests (FALLA pública).
+  - `tests/reportes/use_cases/test_registrar_publicacion.py` — 8 tests (PUBLICACION pública).
+  - `tests/reportes/use_cases/test_listar_reportes_admin.py` — 10 tests (listado admin).
+  - `tests/reportes/use_cases/test_cambiar_estado_reporte.py` — 8 tests (cambio de estado).
+- **Fakes in-memory** en `tests/{personas,reportes}/repositories/fake.py`
+  (`FakePersonaRepository` y `FakeReporteRepository`): implementan la misma
+  interfaz pública que los repos reales. **Test-only**; el código de `app/`
+  nunca las importa. Permiten que los use-case tests corran en milisegundos,
+  sin InsightFace ni PostgreSQL.
 - **Fixtures clave** en `tests/conftest.py`:
   - `client` (TestClient de FastAPI, sin levantar lifespan).
   - `policy` (MatchingPolicy con `threshold=0.55`).
   - `admin_token` / `admin_headers` (Bearer token para endpoints de admin).
-- **Gap conocido**: tests de integración del `PersonaRepository` real
+- **Gap conocido**: tests de integración de los repositorios reales
   requieren PostgreSQL + pgvector corriendo; diferido a un cambio futuro.
