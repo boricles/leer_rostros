@@ -9,8 +9,8 @@ import pytest
 from app.domain.matching import MatchingPolicy
 from app.domain.persona import Estado, PersonaBase
 from app.schemas import Candidato
-from app.use_cases import BuscarAdmin
-from tests.repositories.fake import FakePersonaRepository
+from app.personas.use_cases import BuscarAdmin
+from tests.personas.repositories.fake import FakePersonaRepository
 
 
 @pytest.fixture(autouse=True)

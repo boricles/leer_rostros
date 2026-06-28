@@ -1,7 +1,7 @@
 """EliminarPersona use case: ADMIN delete flow."""
 
-from app.repositories.persona import PersonaRepository
-from app.use_cases._exceptions import PersonaNotFoundError
+from app.personas.repositories.persona import PersonaRepository
+from app.shared._exceptions import PersonaNotFoundError
 
 
 class EliminarPersona:

@@ -30,7 +30,16 @@ from app.config import get_settings
 from app.database import close_pool, get_pool, init_db
 from app.domain import MatchingPolicy
 from app.domain.persona import Estado, PersonaBase
-from app.repositories import PersonaRepository
+from app.personas.repositories.persona import PersonaRepository
+from app.personas.use_cases import (
+    BuscarAdmin,
+    EliminarPersona,
+    ListarPersonasAdmin,
+    ModerarPersona,
+    RegistrarBusqueda,
+    RegistrarEncontrado,
+)
+
 from app.schemas import (
     AdminStats,
     Candidato,
@@ -46,15 +55,7 @@ from app.schemas import (
     ResultadoBusqueda,
     ResultadoRegistro,
 )
-from app.use_cases import (
-    BuscarAdmin,
-    EliminarPersona,
-    ListarPersonasAdmin,
-    ModerarPersona,
-    RegistrarBusqueda,
-    RegistrarEncontrado,
-)
-from app.use_cases._exceptions import (
+from app.shared._exceptions import (
     ModificacionInvalidaError,
     PersonaNotFoundError,
     PersonaValidationError,
