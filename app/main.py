@@ -309,6 +309,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add-on opcional de matching bidireccional + WhatsApp (carpeta addon/). Si no está
+# instalado, la app arranca igual sin esos endpoints.
+try:
+    from addon.router import router as addon_router
+
+    app.include_router(addon_router)
+except Exception as _addon_err:  # noqa: BLE001
+    print(f"[addon] no cargado: {_addon_err}", flush=True)
+
 
 @app.get("/health", tags=["sistema"], summary="Estado del servicio")
 def health():
@@ -639,13 +648,58 @@ def cambiar_estado_reporte(reporte_id: str, valor: str):
 # ----------------------------- IMPORTACIÓN MASIVA -----------------------------
 
 
+_MAX_IMG_BYTES = 8 * 1024 * 1024  # 8 MB: tope para evitar agotar memoria
+
+
+def _validar_url_publica(url: str) -> None:
+    """Rechaza esquemas no-http(s) y hosts internos (anti-SSRF).
+
+    La carga masiva descarga `foto_url` provista por el admin; sin esto, una URL
+    podría apuntar a la red interna / metadata del cloud."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    p = urlparse(url)
+    if p.scheme not in ("http", "https"):
+        raise ValueError("La URL debe ser http o https.")
+    host = p.hostname
+    if not host:
+        raise ValueError("La URL no tiene host.")
+    try:
+        infos = socket.getaddrinfo(host, p.port or (443 if p.scheme == "https" else 80))
+    except socket.gaierror:
+        raise ValueError("No se pudo resolver el host de la URL.")
+    for *_, sockaddr in infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if (
+            ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+        ):
+            raise ValueError("La URL apunta a una red interna no permitida.")
+
+
 def _descargar_imagen(url: str) -> bytes:
-    """Descarga una imagen desde una URL pública (para la carga masiva)."""
-    r = requests.get(url, timeout=25, headers={"User-Agent": "reencuentros-importer"})
+    """Descarga una imagen desde una URL pública (para la carga masiva).
+
+    Valida la URL (anti-SSRF) y limita el tamaño descargado a `_MAX_IMG_BYTES`."""
+    _validar_url_publica(url)
+    r = requests.get(
+        url, timeout=25, stream=True, headers={"User-Agent": "reencuentros-importer"}
+    )
     r.raise_for_status()
-    if not r.content:
+    total, chunks = 0, []
+    for chunk in r.iter_content(8192):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > _MAX_IMG_BYTES:
+            raise ValueError("La imagen supera el tamaño máximo permitido (8 MB).")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    if not data:
         raise ValueError("La URL no devolvió contenido.")
-    return r.content
+    return data
 
 
 @app.post(
@@ -720,6 +774,5 @@ async def importar_encontrado(datos: ImportarEncontradoIn):
         descripcion=descripcion,
         codigo=cod,
     )
-    with get_pool().connection() as conn:
-        get_repo().add(persona, [(img, "image/jpeg", embs)])
+    get_repo().add(person_id, persona, [(img, "image/jpeg", embs)])
     return ImportarResultado(estado="creado", person_id=str(person_id), codigo=cod)
