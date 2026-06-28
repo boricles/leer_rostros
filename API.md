@@ -170,6 +170,92 @@ await fetch(`/api/admin/personas/${id}`, { method: "DELETE" });
 
 ---
 
+## 🚩 REPORTES (público)
+
+Cualquier usuario puede reportar fallas de la web o publicaciones inadecuadas.
+Quedan en estado `pendiente` para que el superadmin los revise.
+
+### Reportar falla de la página — `POST /reportes/falla`
+
+**Body JSON:** `descripcion`* (≥3 chars) · `url?` · `contacto?`.
+
+```js
+await fetch("/api/reportes/falla", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    descripcion: "Al subir una foto el botón se queda cargando.",
+    url: "https://symtechven.com/",
+    contacto: "user@example.com"
+  })
+});
+```
+
+**Respuesta 201:**
+
+```json
+{
+  "id": "5b7c4d6e-…",
+  "tipo": "falla",
+  "estado": "pendiente",
+  "created_at": "2026-06-27T20:30:00Z"
+}
+```
+
+### Reportar publicación inadecuada — `POST /reportes/publicacion`
+
+**Body JSON:** `person_id`* (UUID) · `descripcion`* (≥3 chars) · `contacto?`.
+
+La publicación **NO** se oculta automáticamente: queda registrada para que el
+admin la revise y decida (puede rechazarla o eliminarla con los endpoints de
+moderación).
+
+```js
+await fetch("/api/reportes/publicacion", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    person_id: "992865da-fcc6-4bb2-9db3-3d4af38269ff",
+    descripcion: "La foto no corresponde a una persona / contenido ofensivo.",
+    contacto: "tester@example.com"
+  })
+});
+```
+
+**Respuesta 201** (igual que falla) o `404` si el `person_id` no existe.
+
+---
+
+## 🛡️ REPORTES (admin)
+
+### Listar reportes — `GET /admin/reportes`
+
+Query: `tipo` (`falla`|`publicacion`), `estado` (`pendiente`|`revisado`|`resuelto`|`descartado`), `limite` (def. 100).
+
+```js
+const r = await fetch("/api/admin/reportes?tipo=falla&estado=pendiente", {
+  headers: { Authorization: "Bearer " + token }
+});
+const reportes = await r.json();
+```
+
+**Respuesta 200:** array de `ReporteAdmin`. Los de tipo `publicacion` traen
+`pub_nombre`, `pub_estado`, `pub_image_url` y `pub_moderacion` (snapshot de
+la publicación al momento del query).
+
+### Cambiar estado de un reporte — `PATCH /admin/reportes/{id}/estado?valor=revisado`
+
+`valor` = `pendiente` | `revisado` | `resuelto` | `descartado`.
+
+```js
+await fetch(`/api/admin/reportes/${id}/estado?valor=revisado`, {
+  method: "PATCH",
+  headers: { Authorization: "Bearer " + token }
+});
+```
+
+---
+
 ## Referencia de campos de respuesta
 
 | Campo | Significado |
