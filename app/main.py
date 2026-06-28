@@ -32,6 +32,7 @@ from app.domain import MatchingPolicy
 from app.domain.persona import Estado, PersonaBase
 from app.personas.repositories.persona import PersonaRepository
 from app.personas.use_cases import (
+    AgregarHistorial,
     BuscarAdmin,
     EliminarPersona,
     ListarPersonasAdmin,
@@ -39,6 +40,7 @@ from app.personas.use_cases import (
     ModerarPersona,
     RegistrarBusqueda,
     RegistrarEncontrado,
+    VerTrazabilidad,
 )
 from app.reportes.repositories.reporte import ReporteRepository
 from app.reportes.use_cases import (
@@ -62,7 +64,10 @@ from app.schemas import (
     ReporteFallaIn,
     ReportePublicacionIn,
     ResultadoBusqueda,
+    ResultadoHistorial,
     ResultadoRegistro,
+    HistorialEventoIn,
+    TrazaPersona,
 )
 from app.shared._exceptions import (
     ModificacionInvalidaError,
@@ -440,6 +445,11 @@ async def registrar_encontrado(
         None, description="Identificación del responsable."
     ),
     descripcion: str | None = Form(None, description="Descripción física básica."),
+    confirmar_duplicado: bool = Form(
+        False,
+        description="Si la cédula ya existe entre los encontrados, en false solo avisa "
+        "(no crea duplicado). En true agrega este avistamiento al histórico de esa persona.",
+    ),
 ):
     procesadas = await _procesar_fotos(files)
     use_case = RegistrarEncontrado(get_repo(), get_policy())
@@ -457,6 +467,34 @@ async def registrar_encontrado(
         telefono_responsable=telefono_responsable,
         doc_responsable=doc_responsable,
         descripcion=descripcion,
+        confirmar_duplicado=confirmar_duplicado,
+    )
+
+
+@app.post(
+    "/encontrados/{person_id}/historial",
+    response_model=ResultadoHistorial,
+    status_code=201,
+    tags=["rescatista"],
+    summary="Rescatista: agregar un avistamiento al histórico de una persona",
+)
+def agregar_historial(person_id: str, evento: HistorialEventoIn):
+    """Registra un nuevo **avistamiento** (trazabilidad) de una persona ya encontrada.
+
+    Úsalo cuando un rescatista vuelve a ver/trasladar a la persona o corrige dónde
+    está: se guarda el evento con su **timestamp** y se actualiza la ubicación
+    actual de la ficha. Hace falta al menos `refugio` o `ubicacion`.
+
+    `404` si el `person_id` no existe; `422` si no se indica ningún lugar."""
+    use_case = AgregarHistorial(get_repo())
+    return _use_case_execute(
+        use_case.execute,
+        person_id=person_id,
+        refugio=evento.refugio,
+        ubicacion=evento.ubicacion,
+        encontrado_por=evento.encontrado_por,
+        telefono_responsable=evento.telefono_responsable,
+        nota=evento.nota,
     )
 
 
@@ -583,6 +621,22 @@ def moderar(person_id: str, valor: str):
 def eliminar(person_id: str):
     """Borra la persona, sus fotos del almacenamiento y sus filas de la BD."""
     use_case = EliminarPersona(get_repo())
+    return _use_case_execute(use_case.execute, person_id=person_id)
+
+
+@app.get(
+    "/admin/personas/{person_id}/historial",
+    response_model=TrazaPersona,
+    tags=["admin"],
+    dependencies=[Depends(get_current_admin)],
+    responses=_ADMIN_RESPONSES,
+    summary="Trazabilidad: histórico de avistamientos de una persona",
+)
+def ver_trazabilidad(person_id: str):
+    """Devuelve el **rastro** completo de una persona encontrada: cada avistamiento
+    con su `ubicacion`, quién la reportó y el `timestamp`, en orden cronológico.
+    Incluye datos sensibles (teléfono), por eso es solo de admin. `404` si no existe."""
+    use_case = VerTrazabilidad(get_repo())
     return _use_case_execute(use_case.execute, person_id=person_id)
 
 

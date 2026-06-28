@@ -161,6 +161,51 @@ class PersonaRepository:
         LIMIT 1
     """
 
+    # Encontrada existente con la misma cédula (normalizada), una fila por persona.
+    _FIND_BY_DOC = """
+        SELECT DISTINCT ON (p.person_id)
+               p.person_id, p.nombre, p.apellido, p.doc_numero, p.refugio,
+               p.ubicacion, p.image_url, p.es_menor, p.codigo
+        FROM personas p
+        WHERE p.estado = 'encontrada'
+          AND p.doc_numero IS NOT NULL AND lower(btrim(p.doc_numero)) = lower(btrim(%s))
+        ORDER BY p.person_id, p.created_at ASC
+        LIMIT 1
+    """
+
+    # ¿Existe esa persona? (cualquier fila/foto con ese person_id)
+    _PERSONA_EXISTS = "SELECT 1 FROM personas WHERE person_id = %s LIMIT 1"
+
+    # Inserta un evento de trazabilidad y devuelve sus campos.
+    _INSERT_HISTORIAL = """
+        INSERT INTO persona_historial
+            (person_id, refugio, ubicacion, encontrado_por, telefono_responsable, nota)
+        VALUES (%(pid)s, %(refugio)s, %(ubicacion)s, %(encontrado_por)s, %(tel)s, %(nota)s)
+        RETURNING id, person_id, refugio, ubicacion, encontrado_por,
+                  telefono_responsable, nota, created_at
+    """
+
+    # Actualiza los datos "actuales" de una persona encontrada (todas sus fotos).
+    # COALESCE: solo pisa el valor si llega uno nuevo (no borra con NULL).
+    _UPDATE_ENCONTRADA = """
+        UPDATE personas SET
+            refugio              = COALESCE(%(refugio)s, refugio),
+            ubicacion            = COALESCE(%(ubicacion)s, ubicacion),
+            encontrado_por       = COALESCE(%(encontrado_por)s, encontrado_por),
+            telefono_responsable = COALESCE(%(tel)s, telefono_responsable)
+        WHERE person_id = %(pid)s
+    """
+
+    _LIST_HISTORIAL = """
+        SELECT id, person_id, refugio, ubicacion, encontrado_por,
+               telefono_responsable, nota, created_at
+        FROM persona_historial
+        WHERE person_id = %s
+        ORDER BY created_at ASC, id ASC
+    """
+
+    _COUNT_HISTORIAL = "SELECT count(*) FROM persona_historial WHERE person_id = %s"
+
     def __init__(self, pool: ConnectionPool, policy: MatchingPolicy):
         self._pool = pool
         self._policy = policy
@@ -275,6 +320,78 @@ class PersonaRepository:
         if row is None:
             return None
         return self._exact_row_to_candidato_dict(row)
+
+    def find_encontrada_by_doc(self, doc_numero: str) -> dict | None:
+        """Devuelve la persona ENCONTRADA cuya cédula coincide (normalizada), o None.
+
+        Sirve para detectar duplicados al registrar un encontrado. No filtra por
+        moderación: un duplicado pendiente sigue siendo duplicado.
+        """
+        if not doc_numero or not doc_numero.strip():
+            return None
+        with self._pool.connection() as conn:
+            row = conn.execute(self._FIND_BY_DOC, (doc_numero,)).fetchone()
+        if row is None:
+            return None
+        return {
+            "person_id": str(row[0]),
+            "nombre": row[1],
+            "apellido": row[2],
+            "doc_numero": row[3],
+            "refugio": row[4],
+            "ubicacion": row[5],
+            "image_url": row[6],
+            "es_menor": bool(row[7]),
+            "codigo": row[8],
+        }
+
+    def persona_exists(self, person_id: str) -> bool:
+        """True si existe alguna foto/fila con ese person_id."""
+        with self._pool.connection() as conn:
+            return conn.execute(self._PERSONA_EXISTS, (person_id,)).fetchone() is not None
+
+    def add_historial(
+        self,
+        person_id: str,
+        *,
+        refugio: str | None = None,
+        ubicacion: str | None = None,
+        encontrado_por: str | None = None,
+        telefono_responsable: str | None = None,
+        nota: str | None = None,
+        actualizar_actual: bool = True,
+    ) -> dict:
+        """Agrega un evento al histórico de trazabilidad y devuelve el evento creado.
+
+        Si `actualizar_actual` (por defecto), también actualiza los datos "actuales"
+        de la persona (refugio/ubicacion/encontrado_por/teléfono) — así la ficha
+        refleja el último avistamiento mientras el histórico conserva todos.
+        """
+        params = {
+            "pid": person_id,
+            "refugio": refugio,
+            "ubicacion": ubicacion,
+            "encontrado_por": encontrado_por,
+            "tel": telefono_responsable,
+            "nota": nota,
+        }
+        with self._pool.connection() as conn:
+            row = conn.execute(self._INSERT_HISTORIAL, params).fetchone()
+            if actualizar_actual:
+                conn.execute(self._UPDATE_ENCONTRADA, params)
+            conn.commit()
+        return self._historial_row_to_dict(row)
+
+    def list_historial(self, person_id: str) -> list[dict]:
+        """Histórico de trazabilidad de una persona, en orden cronológico."""
+        with self._pool.connection() as conn:
+            rows = conn.execute(self._LIST_HISTORIAL, (person_id,)).fetchall()
+        return [self._historial_row_to_dict(r) for r in rows]
+
+    def count_historial(self, person_id: str) -> int:
+        """Cantidad de eventos en el histórico de una persona."""
+        with self._pool.connection() as conn:
+            return int(conn.execute(self._COUNT_HISTORIAL, (person_id,)).fetchone()[0])
 
     def list_publico(self, estado: str, limit: int, offset: int = 0) -> list[dict]:
         """Listado PÚBLICO paginado (sin datos sensibles). Solo moderacion='aprobada'."""
@@ -452,6 +569,20 @@ class PersonaRepository:
             "distancia": round(d, 4),
             "coincidencia": self._policy.match_percentage(d),
             "confianza": self._policy.confidence_band(d),
+        }
+
+    def _historial_row_to_dict(self, row: tuple) -> dict:
+        """Convierte una fila de persona_historial en un EventoHistorial-shaped dict."""
+        (id_, person_id, refugio, ubicacion, encontrado_por, tel, nota, created_at) = row
+        return {
+            "id": str(id_),
+            "person_id": str(person_id),
+            "refugio": refugio,
+            "ubicacion": ubicacion,
+            "encontrado_por": encontrado_por,
+            "telefono_responsable": tel,
+            "nota": nota,
+            "created_at": created_at,
         }
 
     def _exact_row_to_candidato_dict(self, row: tuple) -> dict:

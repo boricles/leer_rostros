@@ -67,12 +67,84 @@ class AlertaFamiliar(BaseModel):
     es_menor: bool = False  # Used by MenoresPrivacy to mask familiar_nombre for minors
 
 
+class AlertaDuplicado(BaseModel):
+    """Aviso de que YA existe una persona encontrada con la misma cédula.
+
+    Se devuelve cuando un rescatista intenta registrar a alguien cuyo documento
+    coincide con un encontrado previo. El rescatista decide: si reenvía con
+    `confirmar_duplicado=true`, el nuevo avistamiento se agrega al histórico de
+    esa persona (no se crea un duplicado)."""
+
+    person_id: str = Field(..., description="ID de la persona ya registrada.")
+    codigo: str | None = Field(None, description="Código del registro existente.")
+    nombre: str | None = None
+    apellido: str | None = None
+    doc_numero: str | None = Field(None, description="Documento que coincidió.")
+    refugio: str | None = Field(None, description="Refugio actual registrado.")
+    ubicacion: str | None = None
+    image_url: str | None = None
+    es_menor: bool = False
+    mensaje: str = Field(
+        "Ya existe una persona registrada con esta cédula. "
+        "Reenvía con confirmar_duplicado=true para agregar este avistamiento a su histórico.",
+        description="Texto orientativo para el front.",
+    )
+
+
 class ResultadoRegistro(BaseModel):
     """Respuesta del flujo RESCATISTA: código + posible alerta de coincidencia."""
 
     codigo: str = Field(..., description="Código de registro generado.")
     person_id: str
     alerta: AlertaFamiliar | None = Field(None, description="Familiar que ya buscaba a esta persona, si hay match.")
+    alerta_duplicado: AlertaDuplicado | None = Field(
+        None,
+        description="Si la cédula ya existe entre los encontrados: datos del registro previo. "
+        "Si no se confirmó, NO se creó persona nueva.",
+    )
+    historial_actualizado: bool = Field(
+        False,
+        description="True si este registro se agregó como avistamiento al histórico de una persona ya existente.",
+    )
+
+
+class EventoHistorial(BaseModel):
+    """Un evento del histórico de trazabilidad de una persona encontrada."""
+
+    id: str
+    person_id: str
+    refugio: str | None = None
+    ubicacion: str | None = Field(None, description="Dónde se la vio/encontró en este evento.")
+    encontrado_por: str | None = Field(None, description="Quién la reportó en este evento.")
+    telefono_responsable: str | None = Field(None, description="Teléfono del responsable en este evento.")
+    nota: str | None = Field(None, description="Nota libre (p. ej. 'registro inicial', 'traslado').")
+    created_at: datetime = Field(..., description="Timestamp del avistamiento.")
+
+
+class HistorialEventoIn(BaseModel):
+    """Nuevo avistamiento para el histórico de una persona ya registrada."""
+
+    refugio: str | None = Field(None, description="Refugio donde está ahora.", examples=["Refugio Sur, Valencia"])
+    ubicacion: str | None = Field(None, description="Dónde se la vio/encontró.", examples=["Av. Bolívar, frente a la plaza"])
+    encontrado_por: str | None = Field(None, description="Quién la reporta ahora.", examples=["José (rescatista)"])
+    telefono_responsable: str | None = Field(None, description="Teléfono de contacto del responsable.")
+    nota: str | None = Field(None, description="Nota libre del evento.", examples=["La trasladaron a otro refugio."])
+
+
+class ResultadoHistorial(BaseModel):
+    """Respuesta al agregar un avistamiento al histórico."""
+
+    person_id: str
+    evento: EventoHistorial
+    total_eventos: int = Field(..., description="Cantidad total de eventos en el histórico tras agregar este.")
+
+
+class TrazaPersona(BaseModel):
+    """Histórico completo (trazabilidad) de una persona encontrada."""
+
+    person_id: str
+    total_eventos: int
+    eventos: list[EventoHistorial] = Field(..., description="Eventos en orden cronológico (más antiguo primero).")
 
 
 class ReporteFallaIn(BaseModel):

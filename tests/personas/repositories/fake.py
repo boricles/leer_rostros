@@ -34,6 +34,8 @@ class FakePersonaRepository:
             str, list[bytes]
         ] = {}  # person_id -> list of fake embeddings
         self._deleted: list[str] = []
+        self._historial: list[dict] = []  # eventos de trazabilidad
+        self._seq: int = 0  # contador determinista para ids/timestamps de eventos
 
     def add(
         self,
@@ -72,6 +74,79 @@ class FakePersonaRepository:
             results.append(self._to_candidato_dict(persona, distancia))
         off = max(0, offset)
         return results[off: off + limit]
+
+    def find_encontrada_by_doc(self, doc_numero: str) -> dict | None:
+        """Primera persona ENCONTRADA con la misma cédula (normalizada), o None."""
+        if not doc_numero or not doc_numero.strip():
+            return None
+        target = doc_numero.strip().casefold()
+        for p in self._personas:
+            if p.estado.value != "encontrada":
+                continue
+            if p.doc_numero and p.doc_numero.strip().casefold() == target:
+                return {
+                    "person_id": str(p.person_id),
+                    "nombre": p.nombre,
+                    "apellido": p.apellido,
+                    "doc_numero": p.doc_numero,
+                    "refugio": p.refugio,
+                    "ubicacion": p.ubicacion,
+                    "image_url": p.photos[0] if p.photos else None,
+                    "es_menor": p.es_menor,
+                    "codigo": p.codigo,
+                }
+        return None
+
+    def persona_exists(self, person_id: str) -> bool:
+        return any(str(p.person_id) == person_id for p in self._personas)
+
+    def add_historial(
+        self,
+        person_id: str,
+        *,
+        refugio: str | None = None,
+        ubicacion: str | None = None,
+        encontrado_por: str | None = None,
+        telefono_responsable: str | None = None,
+        nota: str | None = None,
+        actualizar_actual: bool = True,
+    ) -> dict:
+        self._seq += 1
+        evento = {
+            "id": f"evt-{self._seq}",
+            "person_id": person_id,
+            "refugio": refugio,
+            "ubicacion": ubicacion,
+            "encontrado_por": encontrado_por,
+            "telefono_responsable": telefono_responsable,
+            "nota": nota,
+            "created_at": datetime(2026, 1, 1, 0, 0, self._seq % 60),
+        }
+        self._historial.append(evento)
+        if actualizar_actual:
+            for i, p in enumerate(self._personas):
+                if str(p.person_id) != person_id:
+                    continue
+                upd = {}
+                if refugio:
+                    upd["refugio"] = refugio
+                if ubicacion:
+                    upd["ubicacion"] = ubicacion
+                if encontrado_por:
+                    upd["encontrado_por"] = encontrado_por
+                if telefono_responsable:
+                    upd["telefono_responsable"] = telefono_responsable
+                if upd:
+                    self._personas[i] = p.model_copy(update=upd)
+        return dict(evento)
+
+    def list_historial(self, person_id: str) -> list[dict]:
+        return [
+            dict(e) for e in self._historial if e["person_id"] == person_id
+        ]
+
+    def count_historial(self, person_id: str) -> int:
+        return sum(1 for e in self._historial if e["person_id"] == person_id)
 
     def find_exact_match(
         self,

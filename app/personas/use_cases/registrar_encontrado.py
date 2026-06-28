@@ -6,7 +6,7 @@ from app.domain.matching import MatchingPolicy
 from app.domain.persona import Estado, PersonaBase
 from app.domain.privacy import MenoresPrivacy
 from app.personas.repositories.persona import PersonaRepository
-from app.schemas import AlertaFamiliar, ResultadoRegistro
+from app.schemas import AlertaDuplicado, AlertaFamiliar, ResultadoRegistro
 from app.shared._exceptions import PersonaValidationError, RostroNoDetectadoError
 from app.shared._helpers import ProcessedPhotos, _embedding_consulta, _gen_codigo
 
@@ -33,6 +33,7 @@ class RegistrarEncontrado:
         encontrado_por: str | None = None,
         doc_responsable: str | None,
         descripcion: str | None,
+        confirmar_duplicado: bool = False,
     ) -> ResultadoRegistro:
         """Register a found person and return registration result with optional alert.
 
@@ -42,8 +43,17 @@ class RegistrarEncontrado:
         3. telefono_responsable is required.
         4. If es_menor=True, doc_responsable is required.
 
+        Trazabilidad / duplicados:
+        - Si llega `doc_numero` y ya existe un ENCONTRADO con esa cédula:
+          * sin `confirmar_duplicado` → NO se crea persona nueva; se devuelve
+            `alerta_duplicado` con los datos del registro previo.
+          * con `confirmar_duplicado=True` → el avistamiento se agrega al histórico
+            de esa persona (timestamp + ubicación) y se actualiza su ubicación actual.
+        - Si NO hay duplicado, se crea la persona y se registra su primer evento de
+          histórico (el avistamiento inicial).
+
         Returns:
-            ResultadoRegistro with codigo, person_id, and optional alerta.
+            ResultadoRegistro with codigo, person_id, optional alerta and alerta_duplicado.
 
         Raises:
             RostroNoDetectadoError: If no faces detected.
@@ -60,6 +70,19 @@ class RegistrarEncontrado:
             raise PersonaValidationError(
                 "Para un menor, la identificación del responsable es obligatoria."
             )
+
+        # Trazabilidad: ¿ya existe un encontrado con esta cédula?
+        if doc_numero and doc_numero.strip():
+            existente = self._repo.find_encontrada_by_doc(doc_numero)
+            if existente is not None:
+                return self._manejar_duplicado(
+                    existente=existente,
+                    refugio=refugio,
+                    ubicacion=ubicacion,
+                    encontrado_por=encontrado_por,
+                    telefono_responsable=telefono_responsable,
+                    confirmar_duplicado=confirmar_duplicado,
+                )
 
         # Build domain object
         person_id = uuid4()
@@ -86,6 +109,17 @@ class RegistrarEncontrado:
         # Persist
         self._repo.add(person_id, persona, procesadas)
 
+        # Trazabilidad: primer evento del histórico (avistamiento inicial).
+        self._repo.add_historial(
+            str(person_id),
+            refugio=refugio,
+            ubicacion=ubicacion,
+            encontrado_por=encontrado_por,
+            telefono_responsable=telefono_responsable,
+            nota="registro inicial",
+            actualizar_actual=False,  # la persona ya nace con estos datos
+        )
+
         # Cross-flow search for matching buscada
         embedding = _embedding_consulta(procesadas)
         buscados = self._repo.search_by_estado(embedding, "buscada", 1)
@@ -111,4 +145,55 @@ class RegistrarEncontrado:
             codigo=codigo,
             person_id=str(person_id),
             alerta=alerta,
+        )
+
+    def _manejar_duplicado(
+        self,
+        *,
+        existente: dict,
+        refugio: str | None,
+        ubicacion: str | None,
+        encontrado_por: str | None,
+        telefono_responsable: str | None,
+        confirmar_duplicado: bool,
+    ) -> ResultadoRegistro:
+        """Resuelve el caso de cédula ya existente entre los encontrados."""
+        alerta_dup = AlertaDuplicado(
+            person_id=existente["person_id"],
+            codigo=existente.get("codigo"),
+            nombre=existente.get("nombre"),
+            apellido=existente.get("apellido"),
+            doc_numero=existente.get("doc_numero"),
+            refugio=existente.get("refugio"),
+            ubicacion=existente.get("ubicacion"),
+            image_url=existente.get("image_url"),
+            es_menor=existente.get("es_menor", False),
+        )
+        alerta_dup = MenoresPrivacy(alerta_dup)
+
+        if not confirmar_duplicado:
+            # Solo avisamos: no creamos duplicado ni tocamos el histórico.
+            return ResultadoRegistro(
+                codigo=existente.get("codigo") or "",
+                person_id=existente["person_id"],
+                alerta_duplicado=alerta_dup,
+                historial_actualizado=False,
+            )
+
+        # Confirmado: agregamos el avistamiento al histórico de la persona existente
+        # y actualizamos su ubicación actual.
+        self._repo.add_historial(
+            existente["person_id"],
+            refugio=refugio,
+            ubicacion=ubicacion,
+            encontrado_por=encontrado_por,
+            telefono_responsable=telefono_responsable,
+            nota="avistamiento (duplicado confirmado)",
+            actualizar_actual=True,
+        )
+        return ResultadoRegistro(
+            codigo=existente.get("codigo") or "",
+            person_id=existente["person_id"],
+            alerta_duplicado=alerta_dup,
+            historial_actualizado=True,
         )
