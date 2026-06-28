@@ -39,7 +39,13 @@ from app.personas.use_cases import (
     RegistrarBusqueda,
     RegistrarEncontrado,
 )
-
+from app.reportes.repositories.reporte import ReporteRepository
+from app.reportes.use_cases import (
+    CambiarEstadoReporte,
+    ListarReportesAdmin,
+    RegistrarFalla,
+    RegistrarPublicacion,
+)
 from app.schemas import (
     AdminStats,
     Candidato,
@@ -62,9 +68,10 @@ from app.shared._exceptions import (
     RostroNoDetectadoError,
 )
 
-# Module-level policy and repository (instantiated in lifespan)
+# Module-level policy and repositories (instantiated in lifespan)
 _policy: MatchingPolicy | None = None
 _repo: PersonaRepository | None = None
+_reporte_repo: ReporteRepository | None = None
 
 
 def get_policy() -> MatchingPolicy:
@@ -79,6 +86,13 @@ def get_repo() -> PersonaRepository:
     if _repo is None:
         raise RuntimeError("Repository not initialized. Call lifespan first.")
     return _repo
+
+
+def get_reporte_repo() -> ReporteRepository:
+    """Get the reporte repository instance."""
+    if _reporte_repo is None:
+        raise RuntimeError("Repository not initialized. Call lifespan first.")
+    return _reporte_repo
 
 
 async def _procesar_fotos(files: list[UploadFile]):
@@ -116,7 +130,7 @@ def _use_case_execute(execute_fn, **kwargs):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _policy, _repo
+    global _policy, _repo, _reporte_repo
 
     try:
         init_db()
@@ -130,10 +144,11 @@ async def lifespan(app: FastAPI):
     pool = get_pool()
     faces.warmup()
 
-    # Instantiate policy and repository
+    # Instantiate policy and repositories
     s = get_settings()
     _policy = MatchingPolicy(threshold=s.match_threshold)
     _repo = PersonaRepository(pool=pool, policy=_policy)
+    _reporte_repo = ReporteRepository(pool=pool)
 
     # Seed del primer admin desde env vars (idempotente).
     # Si la tabla `admins` está vacía, crea el admin con admin_user/admin_password.
@@ -187,8 +202,6 @@ tags = [
     {"name": "admin", "description": "Superadmin: buscar, moderar y ver reportes."},
     {"name": "sistema", "description": "Estado del servicio."},
 ]
-
-ESTADOS_REPORTE = ("pendiente", "revisado", "resuelto", "descartado")
 
 # Respuestas de error que Swagger debe mostrar para los endpoints protegidos por
 # `get_current_admin`. Sin esto, /api/docs no exhibe los 401/403 que el dev debe
@@ -544,17 +557,11 @@ def eliminar(person_id: str):
     tags=["reportes"],
     summary="Reportar una falla de la página",
 )
-async def reportar_falla(datos: ReporteFallaIn):
+def reportar_falla(datos: ReporteFallaIn):
     """Cualquier usuario puede reportar un problema/bug de la web. Queda en estado
     `pendiente` para que el superadmin lo revise en `GET /admin/reportes`."""
-    with get_pool().connection() as conn:
-        row = conn.execute(
-            "INSERT INTO reportes (tipo, descripcion, url, contacto) "
-            "VALUES ('falla', %s, %s, %s) RETURNING id, tipo, estado, created_at",
-            (datos.descripcion.strip(), datos.url, datos.contacto),
-        ).fetchone()
-        conn.commit()
-    return ReporteCreado(id=str(row[0]), tipo=row[1], estado=row[2], created_at=row[3])
+    use_case = RegistrarFalla(get_reporte_repo())
+    return _use_case_execute(use_case.execute, datos=datos)
 
 
 @app.post(
@@ -564,27 +571,12 @@ async def reportar_falla(datos: ReporteFallaIn):
     tags=["reportes"],
     summary="Reportar una publicación o foto inadecuada",
 )
-async def reportar_publicacion(datos: ReportePublicacionIn):
+def reportar_publicacion(datos: ReportePublicacionIn):
     """Reporta una publicación inadecuada por su `person_id`. La publicación NO se
     oculta automáticamente: queda registrada para que el superadmin la revise y
     decida (puede rechazarla o eliminarla con los endpoints de moderación)."""
-    try:
-        pid = uuid.UUID(datos.person_id)
-    except ValueError:
-        raise HTTPException(422, "person_id inválido.")
-    with get_pool().connection() as conn:
-        existe = conn.execute(
-            "SELECT 1 FROM personas WHERE person_id = %s LIMIT 1", (pid,)
-        ).fetchone()
-        if not existe:
-            raise HTTPException(404, "No existe la publicación que intentas reportar.")
-        row = conn.execute(
-            "INSERT INTO reportes (tipo, descripcion, person_id, contacto) "
-            "VALUES ('publicacion', %s, %s, %s) RETURNING id, tipo, estado, created_at",
-            (datos.descripcion.strip(), pid, datos.contacto),
-        ).fetchone()
-        conn.commit()
-    return ReporteCreado(id=str(row[0]), tipo=row[1], estado=row[2], created_at=row[3])
+    use_case = RegistrarPublicacion(get_reporte_repo())
+    return _use_case_execute(use_case.execute, datos=datos)
 
 
 @app.get(
@@ -603,47 +595,10 @@ def listar_reportes(
     """Lista los reportes recibidos, del más reciente al más antiguo. Filtra por
     `tipo` ('falla' | 'publicacion') y/o `estado`. Los de publicación traen el
     contexto de la publicación reportada (nombre, foto, estado de moderación)."""
-    conds, args = [], []
-    if tipo in ("falla", "publicacion"):
-        conds.append("r.tipo = %s")
-        args.append(tipo)
-    if estado in ESTADOS_REPORTE:
-        conds.append("r.estado = %s")
-        args.append(estado)
-    where = ("WHERE " + " AND ".join(conds)) if conds else ""
-    args.append(limite)
-    with get_pool().connection() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT r.id, r.tipo, r.descripcion, r.estado, r.person_id, r.url, r.contacto,
-                   r.created_at, p.nombre, p.estado, p.image_url, p.moderacion
-            FROM reportes r
-            LEFT JOIN LATERAL (
-                SELECT nombre, estado, image_url, moderacion FROM personas
-                WHERE person_id = r.person_id ORDER BY created_at LIMIT 1
-            ) p ON true
-            {where}
-            ORDER BY r.created_at DESC LIMIT %s
-            """,
-            tuple(args),
-        ).fetchall()
-    return [
-        ReporteAdmin(
-            id=str(r[0]),
-            tipo=r[1],
-            descripcion=r[2],
-            estado=r[3],
-            person_id=str(r[4]) if r[4] else None,
-            url=r[5],
-            contacto=r[6],
-            created_at=r[7],
-            pub_nombre=r[8],
-            pub_estado=r[9],
-            pub_image_url=r[10],
-            pub_moderacion=r[11],
-        )
-        for r in rows
-    ]
+    use_case = ListarReportesAdmin(get_reporte_repo())
+    return _use_case_execute(
+        use_case.execute, tipo=tipo, estado=estado, limite=limite
+    )
 
 
 @app.patch(
@@ -655,20 +610,10 @@ def listar_reportes(
 )
 def cambiar_estado_reporte(reporte_id: str, valor: str):
     """`valor` = `pendiente` | `revisado` | `resuelto` | `descartado`."""
-    if valor not in ESTADOS_REPORTE:
-        raise HTTPException(400, f"valor debe ser uno de {ESTADOS_REPORTE}")
-    try:
-        rid = uuid.UUID(reporte_id)
-    except ValueError:
-        raise HTTPException(422, "reporte_id inválido.")
-    with get_pool().connection() as conn:
-        n = conn.execute(
-            "UPDATE reportes SET estado = %s WHERE id = %s", (valor, rid)
-        ).rowcount
-        conn.commit()
-    if not n:
-        raise HTTPException(404, "No existe ese reporte")
-    return {"id": reporte_id, "estado": valor}
+    use_case = CambiarEstadoReporte(get_reporte_repo())
+    return _use_case_execute(
+        use_case.execute, reporte_id=reporte_id, valor=valor
+    )
 
 
 # ----------------------------- IMPORTACIÓN MASIVA -----------------------------
