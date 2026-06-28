@@ -31,9 +31,11 @@ class FakePersonaRepository:
         self._policy = policy or MatchingPolicy(threshold=0.55)
         self._personas: list[PersonaBase] = []
         self._embeddings: dict[
-            str, list[bytes]
-        ] = {}  # person_id -> list of fake embeddings
+            str, list[Any]
+        ] = {}  # codigo -> list of fake embeddings for registered searches
         self._deleted: list[str] = []
+        self._historial: list[dict] = []  # eventos de trazabilidad
+        self._seq: int = 0  # contador determinista para ids/timestamps de eventos
 
     def add(
         self,
@@ -48,13 +50,17 @@ class FakePersonaRepository:
             ext = ct.split("/")[-1] if "/" in ct else "jpg"
             url = f"https://fake-cdn.example.com/personas/{foto_id}.{ext}"
             persona.photos.append(url)
+            if persona.codigo:
+                self._embeddings.setdefault(persona.codigo, []).extend(
+                    emb for emb, _calidad in _embs
+                )
         self._personas.append(persona)
         return persona.photos
 
     def search_by_estado(
-        self, embedding: Any, estado: str | None, limit: int
+        self, embedding: Any, estado: str | None, limit: int, offset: int = 0
     ) -> list[dict]:
-        """Return stored personas filtered by estado, with fake distances.
+        """Return stored personas filtered by estado, with fake distances (paginado).
 
         Simulates a cosine-distance search by assigning ascending distances
         to stored personas (0.10, 0.20, 0.30, ...) so that policy.is_match
@@ -67,10 +73,188 @@ class FakePersonaRepository:
             and (estado is None or p.estado.value == estado)
         ]
         results = []
-        for i, persona in enumerate(candidates[:limit]):
+        for i, persona in enumerate(candidates):
             distancia = round(0.10 * (i + 1), 4)
             results.append(self._to_candidato_dict(persona, distancia))
-        return results
+        off = max(0, offset)
+        return results[off: off + limit]
+
+    def find_encontrada_by_doc(self, doc_numero: str) -> dict | None:
+        """Primera persona ENCONTRADA con la misma cédula (normalizada), o None."""
+        if not doc_numero or not doc_numero.strip():
+            return None
+        target = doc_numero.strip().casefold()
+        for p in self._personas:
+            if p.estado.value != "encontrada":
+                continue
+            if p.doc_numero and p.doc_numero.strip().casefold() == target:
+                return {
+                    "person_id": str(p.person_id),
+                    "nombre": p.nombre,
+                    "apellido": p.apellido,
+                    "doc_numero": p.doc_numero,
+                    "refugio": p.refugio,
+                    "ubicacion": p.ubicacion,
+                    "image_url": p.photos[0] if p.photos else None,
+                    "es_menor": p.es_menor,
+                    "codigo": p.codigo,
+                }
+        return None
+
+    def persona_exists(self, person_id: str) -> bool:
+        return any(str(p.person_id) == person_id for p in self._personas)
+
+    def get_persona_basics(self, person_id: str) -> dict | None:
+        for p in self._personas:
+            if str(p.person_id) == person_id:
+                return {
+                    "person_id": person_id,
+                    "doc_numero": p.doc_numero,
+                    "estado": p.estado.value,
+                    "nombre": p.nombre,
+                    "apellido": p.apellido,
+                }
+        return None
+
+    def find_buscadas_by_doc(self, doc_numero: str) -> list[dict]:
+        """Búsqueda inversa: familiares (buscada visibles) con esta cédula."""
+        if not doc_numero or not doc_numero.strip():
+            return []
+        target = doc_numero.strip().casefold()
+        out = []
+        seen = set()
+        for p in self._personas:
+            if p.estado.value != "buscada" or p.moderacion != "aprobada":
+                continue
+            if not p.doc_numero or p.doc_numero.strip().casefold() != target:
+                continue
+            if str(p.person_id) in seen:
+                continue
+            seen.add(str(p.person_id))
+            out.append({
+                "person_id": str(p.person_id),
+                "nombre": p.nombre,
+                "apellido": p.apellido,
+                "telefono": p.telefono_contacto or p.telefono_responsable,
+                "image_url": p.photos[0] if p.photos else None,
+                "es_menor": p.es_menor,
+            })
+        return out
+
+    def add_historial(
+        self,
+        person_id: str,
+        *,
+        refugio: str | None = None,
+        ubicacion: str | None = None,
+        encontrado_por: str | None = None,
+        telefono_responsable: str | None = None,
+        nota: str | None = None,
+        actualizar_actual: bool = True,
+    ) -> dict:
+        self._seq += 1
+        evento = {
+            "id": f"evt-{self._seq}",
+            "person_id": person_id,
+            "refugio": refugio,
+            "ubicacion": ubicacion,
+            "encontrado_por": encontrado_por,
+            "telefono_responsable": telefono_responsable,
+            "nota": nota,
+            "created_at": datetime(2026, 1, 1, 0, 0, self._seq % 60),
+        }
+        self._historial.append(evento)
+        if actualizar_actual:
+            for i, p in enumerate(self._personas):
+                if str(p.person_id) != person_id:
+                    continue
+                upd = {}
+                if refugio:
+                    upd["refugio"] = refugio
+                if ubicacion:
+                    upd["ubicacion"] = ubicacion
+                if encontrado_por:
+                    upd["encontrado_por"] = encontrado_por
+                if telefono_responsable:
+                    upd["telefono_responsable"] = telefono_responsable
+                if upd:
+                    self._personas[i] = p.model_copy(update=upd)
+        return dict(evento)
+
+    def list_historial(self, person_id: str) -> list[dict]:
+        return [
+            dict(e) for e in self._historial if e["person_id"] == person_id
+        ]
+
+    def count_historial(self, person_id: str) -> int:
+        return sum(1 for e in self._historial if e["person_id"] == person_id)
+
+    def find_exact_match(
+        self,
+        *,
+        doc_numero: str,
+        nombre: str,
+        apellido: str | None = None,
+        estado: str = "encontrada",
+    ) -> dict | None:
+        """Match EXACTO por texto (cédula + nombre [+ apellido]) normalizado."""
+        def norm(s: str | None) -> str:
+            return s.strip().casefold() if s else ""
+
+        for p in self._personas:
+            if p.estado.value != estado or p.moderacion != "aprobada":
+                continue
+            if not p.doc_numero or norm(p.doc_numero) != norm(doc_numero):
+                continue
+            if not p.nombre or norm(p.nombre) != norm(nombre):
+                continue
+            if apellido and apellido.strip() and norm(p.apellido) != norm(apellido):
+                continue
+            d = self._to_candidato_dict(p, 0.0)
+            d.update({"distancia": 0.0, "coincidencia": 100, "confianza": "alta"})
+            return d
+        return None
+
+    def list_publico(self, estado: str, limit: int, offset: int = 0) -> list[dict]:
+        """Listado público (encontradas aprobadas) con campos no sensibles."""
+        filtered = [
+            {
+                "person_id": str(p.person_id),
+                "estado": p.estado.value,
+                "es_menor": p.es_menor,
+                "nombre": p.nombre,
+                "apellido": p.apellido,
+                "edad": p.edad,
+                "ubicacion": p.ubicacion or p.refugio,
+                "descripcion": p.descripcion,
+                "image_url": p.photos[0] if p.photos else None,
+                "created_at": datetime.now(),
+            }
+            for p in self._personas
+            if p.estado.value == estado and p.moderacion == "aprobada"
+        ]
+        off = max(0, offset)
+        return filtered[off: off + limit]
+
+    def count_aprobadas(self, estado: str | None = None) -> int:
+        return len({
+            str(p.person_id)
+            for p in self._personas
+            if p.moderacion == "aprobada" and (estado is None or p.estado.value == estado)
+        })
+
+    def count_admin(self, estado: str | None = None, moderacion: str | None = None) -> int:
+        return len({
+            str(p.person_id)
+            for p in self._personas
+            if (not estado or p.estado.value == estado)
+            and (not moderacion or p.moderacion == moderacion)
+        })
+
+    def get_busqueda_embedding(self, codigo: str) -> Any | None:
+        """Return first stored fake embedding for a search code."""
+        embeddings = self._embeddings.get(codigo)
+        return embeddings[0] if embeddings else None
 
     def search_admin(
         self, embedding: Any, estado: str | None, limit: int

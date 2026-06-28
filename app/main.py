@@ -14,7 +14,7 @@ from functools import wraps
 from typing import Any
 
 import requests
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import faces
@@ -40,12 +40,17 @@ from app.testimonios.use_cases import (
     RegistrarTestimonio,
 )
 from app.personas.use_cases import (
+    AgregarHistorial,
     BuscarAdmin,
     EliminarPersona,
+    ListarCoincidenciasBusqueda,
     ListarPersonasAdmin,
+    ListarPublico,
     ModerarPersona,
     RegistrarBusqueda,
     RegistrarEncontrado,
+    VerFichaPersona,
+    VerTrazabilidad,
 )
 from app.reportes.repositories.reporte import ReporteRepository
 from app.reportes.use_cases import (
@@ -59,6 +64,8 @@ from app.schemas import (
     Candidato,
     LoginBody,
     LoginResp,
+    PaginaPersonas,
+    PaginaPublica,
     ImportarEncontradoIn,
     ImportarResultado,
     PersonaAdmin,
@@ -67,10 +74,14 @@ from app.schemas import (
     ReporteFallaIn,
     ReportePublicacionIn,
     ResultadoBusqueda,
+    ResultadoHistorial,
     ResultadoRegistro,
     TestimonioAdmin,
     TestimonioCreado,
     TestimonioPublico,
+    HistorialEventoIn,
+    FichaPersona,
+    TrazaPersona,
 )
 from app.shared._exceptions import (
     ArchivoInvalidoError,
@@ -267,10 +278,16 @@ Un familiar sube la foto de a quién busca. Se registra como *buscada* y se devu
 | `doc_tipo` | texto | no | `V` |
 | `doc_numero` | texto | no* | `12345678` |
 | `telefono_contacto` | texto | no | `0412-1234567` |
-| `limite` | entero | no (def. `10`) | `20` |
+| `limit` / `limite` | entero | no (def. `10`) | `20` |
+| `offset` | entero | no (def. `0`) | `20` |
+| `page` | entero | no | `2` |
 
 \\* Manda **al menos** `nombre` o `doc_numero` (validación).
-El front decide cuántas coincidencias recibir con **`limite`** (1-50).
+El front decide cuántas coincidencias recibir con **`limit`** (1-50). **`limite`**
+se mantiene por compatibilidad. **`offset`** / **`page`** permiten cargar más
+coincidencias sin traer todo el listado en una sola respuesta. La respuesta incluye
+**`data`** y **`meta`** (`total_records`, `current_page`, `total_pages`) además de
+`coincidencias` (que se mantiene por compatibilidad).
 
 ### 🟢 Flujo RESCATISTA — `POST /encontrados`
 Quien encontró a alguien lo registra. Si un familiar ya lo buscaba, la respuesta trae
@@ -336,8 +353,9 @@ El token se obtiene de `POST /admin/login` (abajo).
 - `GET /admin/stats` — **conteos reales** para el dashboard (total, buscadas, encontradas,
   menores, ocultas, pendientes, reportes). Usalo para los totales; NO cuentes el largo de
   `/admin/personas` (viene topado por `limite`).
-- `GET /admin/personas` — listar registros. Query: `limite`, `offset` (paginación),
-  `estado`, `moderacion`. Para recorrer todo: `limite=100&offset=0`, luego `offset=100`, etc.
+- `GET /admin/personas` — listar registros **paginados**. Query: `limite`, `offset` o
+  `page`, `estado`, `moderacion`. Devuelve **`{data:[...], meta:{total_records, current_page,
+  total_pages, limit, offset}}`**. Recorrer todo: `limite=100&page=1`, `page=2`, …
 - `PATCH /admin/personas/{person_id}/moderacion?valor=aprobada|rechazada|pendiente` — moderar.
 - `DELETE /admin/personas/{person_id}` — borrar.
 - `GET /admin/reportes` — ver reportes recibidos (filtros `tipo`, `estado`).
@@ -439,11 +457,19 @@ async def registrar_busqueda(
         None, description="Teléfono del familiar para el reencuentro."
     ),
     limite: int = Form(
-        10, description="Cuántas coincidencias devolver (1-50). El front lo decide."
+        10, description="Tamaño de página (1-50). Cuántas coincidencias por página."
+    ),
+    limit: int | None = Form(
+        None, description="Alias de limite para clientes que usan limit."
+    ),
+    offset: int = Form(0, description="Cantidad de coincidencias a omitir."),
+    page: int | None = Form(
+        None, description="Pagina 1-based. Si se envia, tiene prioridad sobre offset."
     ),
 ):
     procesadas = await _procesar_fotos(files)
     use_case = RegistrarBusqueda(get_repo(), get_policy())
+    limite_final = limit if limit is not None else limite
     return _use_case_execute(
         use_case.execute,
         procesadas=procesadas,
@@ -453,7 +479,40 @@ async def registrar_busqueda(
         doc_tipo=doc_tipo,
         doc_numero=doc_numero,
         telefono_contacto=telefono_contacto,
-        limite=limite,
+        limite=limite_final,
+        offset=offset,
+        page=page,
+    )
+
+
+@app.get(
+    "/buscados/{codigo}/coincidencias",
+    response_model=ResultadoBusqueda,
+    tags=["familiar"],
+    summary="Familiar: cargar mas coincidencias de una busqueda",
+)
+def listar_coincidencias_busqueda(
+    codigo: str,
+    limite: int | None = Query(None, description="Alias legacy de limit."),
+    limit: int | None = Query(
+        None, description="Cantidad de resultados por pagina (1-50)."
+    ),
+    offset: int = Query(0, description="Cantidad de resultados a omitir."),
+    page: int | None = Query(
+        None, description="Pagina 1-based. Si se envia, tiene prioridad sobre offset."
+    ),
+):
+    """Devuelve mas coincidencias de una busqueda existente sin registrarla de nuevo."""
+    use_case = ListarCoincidenciasBusqueda(get_repo())
+    limite_final = (
+        limit if limit is not None else (limite if limite is not None else 10)
+    )
+    return _use_case_execute(
+        use_case.execute,
+        codigo=codigo,
+        limite=limite_final,
+        offset=offset,
+        page=page,
     )
 
 
@@ -487,6 +546,11 @@ async def registrar_encontrado(
         None, description="Identificación del responsable."
     ),
     descripcion: str | None = Form(None, description="Descripción física básica."),
+    confirmar_duplicado: bool = Form(
+        False,
+        description="Si la cédula ya existe entre los encontrados, en false solo avisa "
+        "(no crea duplicado). En true agrega este avistamiento al histórico de esa persona.",
+    ),
 ):
     procesadas = await _procesar_fotos(files)
     use_case = RegistrarEncontrado(get_repo(), get_policy())
@@ -504,6 +568,56 @@ async def registrar_encontrado(
         telefono_responsable=telefono_responsable,
         doc_responsable=doc_responsable,
         descripcion=descripcion,
+        confirmar_duplicado=confirmar_duplicado,
+    )
+
+
+@app.post(
+    "/encontrados/{person_id}/historial",
+    response_model=ResultadoHistorial,
+    status_code=201,
+    tags=["rescatista"],
+    summary="Rescatista: agregar un avistamiento al histórico de una persona",
+)
+def agregar_historial(person_id: str, evento: HistorialEventoIn):
+    """Registra un nuevo **avistamiento** (trazabilidad) de una persona ya encontrada.
+
+    Úsalo cuando un rescatista vuelve a ver/trasladar a la persona o corrige dónde
+    está: se guarda el evento con su **timestamp** y se actualiza la ubicación
+    actual de la ficha. Hace falta al menos `refugio` o `ubicacion`.
+
+    `404` si el `person_id` no existe; `422` si no se indica ningún lugar."""
+    use_case = AgregarHistorial(get_repo())
+    return _use_case_execute(
+        use_case.execute,
+        person_id=person_id,
+        refugio=evento.refugio,
+        ubicacion=evento.ubicacion,
+        encontrado_por=evento.encontrado_por,
+        telefono_responsable=evento.telefono_responsable,
+        nota=evento.nota,
+    )
+
+
+@app.get(
+    "/encontrados",
+    response_model=PaginaPublica,
+    tags=["rescatista"],
+    summary="Directorio PÚBLICO de personas encontradas (paginado)",
+)
+def listar_encontrados_publico(
+    limite: int = 24,
+    offset: int = 0,
+    page: int | None = None,
+):
+    """Lista pública y paginada de personas **encontradas** (visibles/aprobadas), para
+    mostrar un directorio en el front. Devuelve `{data, meta}` SIN datos sensibles
+    (no teléfono ni documento). Los menores van con nombre/apellido en `null`.
+
+    Paginar con `limite` + `offset` o `page` (1-based)."""
+    use_case = ListarPublico(get_repo())
+    return _use_case_execute(
+        use_case.execute, estado="encontrada", limite=limite, offset=offset, page=page
     )
 
 
@@ -535,30 +649,37 @@ async def buscar_admin(
 
 @app.get(
     "/admin/personas",
-    response_model=list[PersonaAdmin],
+    response_model=PaginaPersonas | list[PersonaAdmin],
     tags=["admin"],
     dependencies=[Depends(get_current_admin)],
     responses=_ADMIN_RESPONSES,
-    summary="Superadmin: listar registros",
+    summary="Superadmin: listar registros (paginado)",
 )
 def listar(
     limite: int = 100,
     estado: str | None = None,
     moderacion: str | None = None,
     offset: int = 0,
+    page: int | None = None,
+    paginado: bool = False,
 ):
-    """Lista registros. Filtra por estado y/o moderación (para revisar/aprobar).
+    """Lista registros. Filtra por `estado` y/o `moderacion`; pagina con `limite` +
+    `offset` (ej. `limite=100&offset=100`) o `page` (1-based).
 
-    Paginación: usa `limite` + `offset` (ej. página 2 de 100 → limite=100&offset=100).
-    Para el TOTAL real usa `GET /admin/stats` (este endpoint solo devuelve la página)."""
+    **Compatibilidad:** por defecto devuelve un **array** de registros (la página actual).
+    Con **`?paginado=true`** devuelve el envelope **`{data:[...], meta:{total_records,
+    current_page, total_pages, limit, offset}}`** (usá esto para mostrar total de páginas;
+    o `GET /admin/stats` para el total real)."""
     use_case = ListarPersonasAdmin(get_repo())
-    return _use_case_execute(
+    pagina = _use_case_execute(
         use_case.execute,
         limite=limite,
         estado=estado,
         moderacion=moderacion,
         offset=offset,
+        page=page,
     )
+    return pagina if paginado else pagina.data
 
 
 @app.get(
@@ -603,6 +724,39 @@ def moderar(person_id: str, valor: str):
 def eliminar(person_id: str):
     """Borra la persona, sus fotos del almacenamiento y sus filas de la BD."""
     use_case = EliminarPersona(get_repo())
+    return _use_case_execute(use_case.execute, person_id=person_id)
+
+
+@app.get(
+    "/admin/personas/{person_id}/historial",
+    response_model=TrazaPersona,
+    tags=["admin"],
+    dependencies=[Depends(get_current_admin)],
+    responses=_ADMIN_RESPONSES,
+    summary="Trazabilidad: histórico de avistamientos de una persona",
+)
+def ver_trazabilidad(person_id: str):
+    """Devuelve el **rastro** completo de una persona encontrada: cada avistamiento
+    con su `ubicacion`, quién la reportó y el `timestamp`, en orden cronológico.
+    Incluye datos sensibles (teléfono), por eso es solo de admin. `404` si no existe."""
+    use_case = VerTrazabilidad(get_repo())
+    return _use_case_execute(use_case.execute, person_id=person_id)
+
+
+@app.get(
+    "/admin/personas/{person_id}/coincidencias",
+    response_model=FichaPersona,
+    tags=["admin"],
+    dependencies=[Depends(get_current_admin)],
+    responses=_ADMIN_RESPONSES,
+    summary="Ficha: quién buscaba a esta persona (inversa por cédula) + histórico",
+)
+def ver_ficha_persona(person_id: str):
+    """**Búsqueda inversa**: dado un encontrado, devuelve los **familiares que ya lo
+    estaban buscando** (match por cédula, con su contacto para el reencuentro) y, en
+    el mismo lugar, su **histórico** de avistamientos. Solo admin (datos sensibles).
+    `404` si el `person_id` no existe."""
+    use_case = VerFichaPersona(get_repo())
     return _use_case_execute(use_case.execute, person_id=person_id)
 
 

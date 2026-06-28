@@ -142,6 +142,31 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS reportes_tipo_idx ON reportes (tipo)")
         conn.execute("CREATE INDEX IF NOT EXISTS reportes_estado_idx ON reportes (estado)")
 
+        # --- Trazabilidad: histórico de avistamientos de una persona ENCONTRADA. ---
+        # Cada fila = un evento (un rescatista la vio/registró en un lugar y momento).
+        # El registro inicial crea el primer evento; cada vez que un rescatista reporta
+        # de nuevo a la misma persona (misma cédula) o modifica su ubicación, se agrega
+        # otro evento con su timestamp. Así queda el rastro de dónde estuvo y cuándo.
+        # `person_id` no es FK porque en `personas` se repite (una fila por foto).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS persona_historial (
+                id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                person_id            UUID NOT NULL,
+                refugio              TEXT,
+                ubicacion            TEXT,
+                encontrado_por       TEXT,
+                telefono_responsable TEXT,
+                nota                 TEXT,
+                created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS persona_historial_person_idx "
+            "ON persona_historial (person_id)"
+        )
+
         # --- Tabla de admins (superadmin) ---
         # El password NUNCA se guarda en plano: vive como hash bcrypt. El seed inicial
         # (desde env vars) lo crea la primera vez que init_db() corre con la tabla

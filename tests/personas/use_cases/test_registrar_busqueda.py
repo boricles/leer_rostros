@@ -79,6 +79,9 @@ class TestRegistrarBusquedaHappyPath:
         assert result.codigo.startswith("REE-")
         assert result.total == 1
         assert len(result.coincidencias) == 1
+        assert result.data == result.coincidencias
+        assert result.meta.total_records == 1
+        assert result.meta.current_page == 1
 
     def test_happy_path_with_doc_numero(self, use_case, fake_repo):
         """doc_numero provided (no name), returns matches."""
@@ -124,6 +127,40 @@ class TestRegistrarBusquedaHappyPath:
 
         assert result.total == 0
         assert result.coincidencias == []
+        assert result.data == []
+        assert result.meta.total_records == 0
+        assert result.meta.total_pages == 0
+
+    def test_paginates_matches_with_offset(self, use_case, fake_repo):
+        """offset skips already loaded ranked candidates."""
+        for i in range(5):
+            found = PersonaBase(
+                person_id=uuid4(),
+                estado=Estado.ENCONTRADA,
+                es_menor=False,
+                nombre=f"Persona {i}",
+                moderacion="aprobada",
+                photos=[f"https://fake-cdn.example.com/personas/{i}.jpg"],
+            )
+            fake_repo._personas.append(found)
+
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="Test",
+            apellido=None,
+            edad=None,
+            doc_tipo=None,
+            doc_numero=None,
+            telefono_contacto=None,
+            limite=2,
+            offset=2,
+        )
+
+        assert result.total == 2
+        assert [c.nombre for c in result.data] == ["Persona 2", "Persona 3"]
+        assert result.meta.total_records == 5
+        assert result.meta.current_page == 2
+        assert result.meta.total_pages == 3
 
     def test_codigo_is_generated(self, use_case):
         """Result has a codigo starting with 'REE-'."""
@@ -272,6 +309,118 @@ class TestRegistrarBusquedaPrivacy:
         candidato = result.coincidencias[0]
         assert candidato.nombre == "María"
         assert candidato.apellido == "González"
+
+
+class TestRegistrarBusquedaMatchExacto:
+    """Atajo por texto: cédula + nombre que coinciden TOTALMENTE saltan la imagen."""
+
+    def _seed_encontrada(self, fake_repo, **kw):
+        defaults = dict(
+            person_id=uuid4(),
+            estado=Estado.ENCONTRADA,
+            es_menor=False,
+            moderacion="aprobada",
+            photos=["https://fake-cdn.example.com/personas/test.jpg"],
+        )
+        defaults.update(kw)
+        found = PersonaBase(**defaults)
+        fake_repo._personas.append(found)
+        return found
+
+    def test_cedula_y_nombre_exactos_devuelven_100(self, use_case, fake_repo):
+        """Cédula + nombre idénticos → un solo candidato al 100%, confianza alta."""
+        self._seed_encontrada(
+            fake_repo, nombre="María", apellido="González", doc_numero="12345678"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="María",
+            apellido="González",
+            edad=None,
+            doc_tipo="V",
+            doc_numero="12345678",
+            telefono_contacto=None,
+            limite=10,
+        )
+        assert result.total == 1
+        candidato = result.coincidencias[0]
+        assert candidato.coincidencia == 100
+        assert candidato.confianza == "alta"
+        assert candidato.distancia == 0.0
+        assert candidato.nombre == "María"
+
+    def test_match_exacto_es_case_insensitive_y_trim(self, use_case, fake_repo):
+        """Coincidencia normalizada: mayúsculas/espacios no rompen el match."""
+        self._seed_encontrada(
+            fake_repo, nombre="Juan", apellido="Pérez", doc_numero="999"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="  juan ",
+            apellido="PÉREZ",
+            edad=None,
+            doc_tipo="V",
+            doc_numero=" 999 ",
+            telefono_contacto=None,
+            limite=10,
+        )
+        assert result.total == 1
+        assert result.coincidencias[0].coincidencia == 100
+
+    def test_cedula_distinta_cae_a_busqueda_por_imagen(self, use_case, fake_repo):
+        """Si la cédula no coincide, NO hay atajo: se usa la búsqueda facial."""
+        self._seed_encontrada(
+            fake_repo, nombre="María", apellido="González", doc_numero="11111111"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="María",
+            apellido="González",
+            edad=None,
+            doc_tipo="V",
+            doc_numero="99999999",  # cédula distinta
+            telefono_contacto=None,
+            limite=10,
+        )
+        # Cae al flujo por imagen: el fake asigna distancia 0.10 (no 0.0).
+        assert result.total == 1
+        assert result.coincidencias[0].distancia != 0.0
+
+    def test_nombre_distinto_cae_a_busqueda_por_imagen(self, use_case, fake_repo):
+        """Misma cédula pero nombre distinto → no es match total, va por imagen."""
+        self._seed_encontrada(
+            fake_repo, nombre="María", apellido="González", doc_numero="12345678"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="Marielena",  # nombre distinto
+            apellido="González",
+            edad=None,
+            doc_tipo="V",
+            doc_numero="12345678",
+            telefono_contacto=None,
+            limite=10,
+        )
+        assert result.total == 1
+        assert result.coincidencias[0].distancia != 0.0
+
+    def test_sin_cedula_no_intenta_atajo(self, use_case, fake_repo):
+        """Sin cédula no hay atajo aunque el nombre coincida; va por imagen."""
+        self._seed_encontrada(
+            fake_repo, nombre="María", apellido="González", doc_numero="12345678"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="María",
+            apellido="González",
+            edad=None,
+            doc_tipo=None,
+            doc_numero=None,  # sin cédula
+            telefono_contacto=None,
+            limite=10,
+        )
+        assert result.total == 1
+        assert result.coincidencias[0].distancia != 0.0
 
 
 class TestRegistrarBusquedaRepoIntegration:
