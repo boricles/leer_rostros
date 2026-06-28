@@ -405,6 +405,114 @@ class TestRegistrarEncontradoTrazabilidad:
         assert result.codigo.startswith("REE-")
 
 
+class TestRegistrarEncontradoBusquedaInversa:
+    """Al registrar, avisa si un familiar ya buscaba a esta persona (por cédula)."""
+
+    def _seed_buscada(self, fake_repo, doc_numero, **kw):
+        defaults = dict(
+            person_id=uuid4(),
+            estado=Estado.BUSCADA,
+            es_menor=False,
+            nombre="Madre",
+            apellido="Solicitante",
+            doc_numero=doc_numero,
+            telefono_contacto="0412-5555555",
+            moderacion="aprobada",
+            photos=["https://fake-cdn.example.com/personas/buscada.jpg"],
+        )
+        defaults.update(kw)
+        b = PersonaBase(**defaults)
+        fake_repo._personas.append(b)
+        return b
+
+    def test_familiar_buscaba_por_cedula(self, use_case, fake_repo):
+        """Un familiar buscaba la misma cédula → llega en coincidencias_familiares."""
+        self._seed_buscada(fake_repo, "C-100", telefono_contacto="0412-7654321")
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            es_menor=False,
+            nombre="Niño",
+            apellido="Perdido",
+            doc_tipo="V",
+            doc_numero="C-100",
+            refugio="Refugio Central",
+            ubicacion="Caracas",
+            telefono_responsable="0414-1234567",
+            doc_responsable=None,
+            descripcion=None,
+        )
+        assert len(result.coincidencias_familiares) == 1
+        fam = result.coincidencias_familiares[0]
+        assert fam.familiar_telefono == "0412-7654321"
+        assert fam.coincidencia == 100
+
+    def test_inversa_normaliza_cedula(self, use_case, fake_repo):
+        self._seed_buscada(fake_repo, "C-100")
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            es_menor=False,
+            nombre="Niño",
+            apellido=None,
+            doc_tipo="V",
+            doc_numero=" c-100 ",
+            refugio="Refugio",
+            ubicacion=None,
+            telefono_responsable="0414-1234567",
+            doc_responsable=None,
+            descripcion=None,
+        )
+        assert len(result.coincidencias_familiares) == 1
+
+    def test_sin_familiar_lista_vacia(self, use_case, fake_repo):
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            es_menor=False,
+            nombre="Nadie",
+            apellido=None,
+            doc_tipo="V",
+            doc_numero="Z-999",
+            refugio="Refugio",
+            ubicacion=None,
+            telefono_responsable="0414-1234567",
+            doc_responsable=None,
+            descripcion=None,
+        )
+        assert result.coincidencias_familiares == []
+
+    def test_duplicado_tambien_trae_familiares(self, use_case, fake_repo):
+        """En el camino de duplicado por cédula también se avisa de los familiares."""
+        # Familiar buscando + encontrada ya existente con la misma cédula
+        self._seed_buscada(fake_repo, "C-100")
+        existente = PersonaBase(
+            person_id=uuid4(),
+            estado=Estado.ENCONTRADA,
+            es_menor=False,
+            nombre="Niño",
+            doc_numero="C-100",
+            refugio="Refugio Norte",
+            codigo="REE-X",
+            moderacion="pendiente",
+            photos=["https://fake-cdn.example.com/personas/e.jpg"],
+        )
+        fake_repo._personas.append(existente)
+
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            es_menor=False,
+            nombre="Niño",
+            apellido=None,
+            doc_tipo="V",
+            doc_numero="C-100",
+            refugio="Refugio Sur",
+            ubicacion="Valencia",
+            telefono_responsable="0414-1234567",
+            doc_responsable=None,
+            descripcion=None,
+        )
+        assert result.alerta_duplicado is not None
+        assert len(result.coincidencias_familiares) == 1
+
+
 class TestRegistrarEncontradoRepoIntegration:
     def test_repo_add_called_with_estado_encontrada(self, use_case, fake_repo):
         """PersonaBase.estado == Estado.ENCONTRADA."""

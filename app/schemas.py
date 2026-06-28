@@ -96,7 +96,12 @@ class ResultadoRegistro(BaseModel):
 
     codigo: str = Field(..., description="Código de registro generado.")
     person_id: str
-    alerta: AlertaFamiliar | None = Field(None, description="Familiar que ya buscaba a esta persona, si hay match.")
+    alerta: AlertaFamiliar | None = Field(None, description="Mejor familiar que ya buscaba a esta persona (match por ROSTRO), si lo hay.")
+    coincidencias_familiares: list[AlertaFamiliar] = Field(
+        default_factory=list,
+        description="Búsqueda INVERSA por cédula: familiares que YA estaban buscando a esta "
+        "persona (mismo documento). Vacío si nadie la buscaba o no se dio cédula.",
+    )
     alerta_duplicado: AlertaDuplicado | None = Field(
         None,
         description="Si la cédula ya existe entre los encontrados: datos del registro previo. "
@@ -145,6 +150,22 @@ class TrazaPersona(BaseModel):
     person_id: str
     total_eventos: int
     eventos: list[EventoHistorial] = Field(..., description="Eventos en orden cronológico (más antiguo primero).")
+
+
+class FichaPersona(BaseModel):
+    """Dossier de una persona: quién la buscaba (inversa por cédula) + su histórico."""
+
+    person_id: str
+    doc_numero: str | None = None
+    familiares_buscando: list[AlertaFamiliar] = Field(
+        default_factory=list,
+        description="Familiares que YA buscaban a esta persona (match por cédula). "
+        "Cada uno trae su contacto para el reencuentro.",
+    )
+    total_eventos: int = 0
+    eventos: list[EventoHistorial] = Field(
+        default_factory=list, description="Histórico de avistamientos (cronológico)."
+    )
 
 
 class ReporteFallaIn(BaseModel):

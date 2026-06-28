@@ -176,6 +176,27 @@ class PersonaRepository:
     # ¿Existe esa persona? (cualquier fila/foto con ese person_id)
     _PERSONA_EXISTS = "SELECT 1 FROM personas WHERE person_id = %s LIMIT 1"
 
+    # Datos base de una persona por su person_id (una fila por persona).
+    _PERSONA_BASICS = """
+        SELECT person_id, max(doc_numero), max(estado), max(nombre), max(apellido)
+        FROM personas WHERE person_id = %s GROUP BY person_id
+    """
+
+    # Búsqueda INVERSA: familiares (buscada, visibles) que buscan a alguien con esta
+    # cédula. Una fila por familiar; trae su contacto para el reencuentro.
+    _FIND_BUSCADAS_BY_DOC = """
+        SELECT DISTINCT ON (p.person_id)
+               p.person_id, p.nombre, p.apellido,
+               coalesce(p.telefono_contacto, p.telefono_responsable) AS telefono,
+               p.image_url, p.es_menor
+        FROM personas p
+        WHERE p.estado = 'buscada'
+          AND p.moderacion = 'aprobada'
+          AND p.doc_numero IS NOT NULL AND lower(btrim(p.doc_numero)) = lower(btrim(%s))
+        ORDER BY p.person_id, p.created_at ASC
+        LIMIT 50
+    """
+
     # Inserta un evento de trazabilidad y devuelve sus campos.
     _INSERT_HISTORIAL = """
         INSERT INTO persona_historial
@@ -349,6 +370,43 @@ class PersonaRepository:
         """True si existe alguna foto/fila con ese person_id."""
         with self._pool.connection() as conn:
             return conn.execute(self._PERSONA_EXISTS, (person_id,)).fetchone() is not None
+
+    def get_persona_basics(self, person_id: str) -> dict | None:
+        """Datos base de una persona (doc/estado/nombre) o None si no existe."""
+        with self._pool.connection() as conn:
+            row = conn.execute(self._PERSONA_BASICS, (person_id,)).fetchone()
+        if row is None:
+            return None
+        return {
+            "person_id": str(row[0]),
+            "doc_numero": row[1],
+            "estado": row[2],
+            "nombre": row[3],
+            "apellido": row[4],
+        }
+
+    def find_buscadas_by_doc(self, doc_numero: str) -> list[dict]:
+        """Búsqueda INVERSA: familiares (buscada visibles) que buscan esta cédula.
+
+        Devuelve una lista de dicts con el contacto del familiar para el reencuentro.
+        Lista vacía si nadie la buscaba o no se aporta cédula. No aplica privacidad
+        de menores (se aplica al construir la alerta).
+        """
+        if not doc_numero or not doc_numero.strip():
+            return []
+        with self._pool.connection() as conn:
+            rows = conn.execute(self._FIND_BUSCADAS_BY_DOC, (doc_numero,)).fetchall()
+        return [
+            {
+                "person_id": str(r[0]),
+                "nombre": r[1],
+                "apellido": r[2],
+                "telefono": r[3],
+                "image_url": r[4],
+                "es_menor": bool(r[5]),
+            }
+            for r in rows
+        ]
 
     def add_historial(
         self,

@@ -100,6 +100,43 @@ class FakePersonaRepository:
     def persona_exists(self, person_id: str) -> bool:
         return any(str(p.person_id) == person_id for p in self._personas)
 
+    def get_persona_basics(self, person_id: str) -> dict | None:
+        for p in self._personas:
+            if str(p.person_id) == person_id:
+                return {
+                    "person_id": person_id,
+                    "doc_numero": p.doc_numero,
+                    "estado": p.estado.value,
+                    "nombre": p.nombre,
+                    "apellido": p.apellido,
+                }
+        return None
+
+    def find_buscadas_by_doc(self, doc_numero: str) -> list[dict]:
+        """Búsqueda inversa: familiares (buscada visibles) con esta cédula."""
+        if not doc_numero or not doc_numero.strip():
+            return []
+        target = doc_numero.strip().casefold()
+        out = []
+        seen = set()
+        for p in self._personas:
+            if p.estado.value != "buscada" or p.moderacion != "aprobada":
+                continue
+            if not p.doc_numero or p.doc_numero.strip().casefold() != target:
+                continue
+            if str(p.person_id) in seen:
+                continue
+            seen.add(str(p.person_id))
+            out.append({
+                "person_id": str(p.person_id),
+                "nombre": p.nombre,
+                "apellido": p.apellido,
+                "telefono": p.telefono_contacto or p.telefono_responsable,
+                "image_url": p.photos[0] if p.photos else None,
+                "es_menor": p.es_menor,
+            })
+        return out
+
     def add_historial(
         self,
         person_id: str,

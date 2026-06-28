@@ -8,6 +8,7 @@ from app.personas.use_cases.listar_publico import ListarPublico
 from app.personas.use_cases.moderar_persona import ModerarPersona
 from app.personas.use_cases.registrar_busqueda import RegistrarBusqueda
 from app.personas.use_cases.registrar_encontrado import RegistrarEncontrado
+from app.personas.use_cases.ver_ficha_persona import VerFichaPersona
 from app.personas.use_cases.ver_trazabilidad import VerTrazabilidad
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "ModerarPersona",
     "RegistrarBusqueda",
     "RegistrarEncontrado",
+    "VerFichaPersona",
     "VerTrazabilidad",
 ]

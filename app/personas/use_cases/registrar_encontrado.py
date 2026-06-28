@@ -71,6 +71,10 @@ class RegistrarEncontrado:
                 "Para un menor, la identificación del responsable es obligatoria."
             )
 
+        # Búsqueda INVERSA por cédula: ¿algún familiar ya estaba buscando a esta
+        # persona (mismo documento) y no la había encontrado? Se notifica al rescatista.
+        familiares = self._alertas_familiares(doc_numero)
+
         # Trazabilidad: ¿ya existe un encontrado con esta cédula?
         if doc_numero and doc_numero.strip():
             existente = self._repo.find_encontrada_by_doc(doc_numero)
@@ -82,6 +86,7 @@ class RegistrarEncontrado:
                     encontrado_por=encontrado_por,
                     telefono_responsable=telefono_responsable,
                     confirmar_duplicado=confirmar_duplicado,
+                    coincidencias_familiares=familiares,
                 )
 
         # Build domain object
@@ -145,7 +150,30 @@ class RegistrarEncontrado:
             codigo=codigo,
             person_id=str(person_id),
             alerta=alerta,
+            coincidencias_familiares=familiares,
         )
+
+    def _alertas_familiares(self, doc_numero: str | None) -> list[AlertaFamiliar]:
+        """Búsqueda inversa por cédula: familiares que ya buscaban a esta persona.
+
+        Devuelve AlertaFamiliar (coincidencia 100% por documento exacto), con la
+        privacidad de menores aplicada. Lista vacía si no hay cédula o nadie buscaba.
+        """
+        if not (doc_numero and doc_numero.strip()):
+            return []
+        alertas = []
+        for f in self._repo.find_buscadas_by_doc(doc_numero):
+            alerta = AlertaFamiliar(
+                person_id=f["person_id"],
+                familiar_nombre=f.get("nombre"),
+                familiar_telefono=f.get("telefono"),
+                image_url=f.get("image_url") or "",
+                coincidencia=100,
+                confianza="alta",
+                es_menor=f.get("es_menor", False),
+            )
+            alertas.append(MenoresPrivacy(alerta))
+        return alertas
 
     def _manejar_duplicado(
         self,
@@ -156,6 +184,7 @@ class RegistrarEncontrado:
         encontrado_por: str | None,
         telefono_responsable: str | None,
         confirmar_duplicado: bool,
+        coincidencias_familiares: list[AlertaFamiliar] | None = None,
     ) -> ResultadoRegistro:
         """Resuelve el caso de cédula ya existente entre los encontrados."""
         alerta_dup = AlertaDuplicado(
@@ -171,6 +200,8 @@ class RegistrarEncontrado:
         )
         alerta_dup = MenoresPrivacy(alerta_dup)
 
+        familiares = coincidencias_familiares or []
+
         if not confirmar_duplicado:
             # Solo avisamos: no creamos duplicado ni tocamos el histórico.
             return ResultadoRegistro(
@@ -178,6 +209,7 @@ class RegistrarEncontrado:
                 person_id=existente["person_id"],
                 alerta_duplicado=alerta_dup,
                 historial_actualizado=False,
+                coincidencias_familiares=familiares,
             )
 
         # Confirmado: agregamos el avistamiento al histórico de la persona existente
@@ -196,4 +228,5 @@ class RegistrarEncontrado:
             person_id=existente["person_id"],
             alerta_duplicado=alerta_dup,
             historial_actualizado=True,
+            coincidencias_familiares=familiares,
         )

@@ -40,6 +40,7 @@ from app.personas.use_cases import (
     ModerarPersona,
     RegistrarBusqueda,
     RegistrarEncontrado,
+    VerFichaPersona,
     VerTrazabilidad,
 )
 from app.reportes.repositories.reporte import ReporteRepository
@@ -67,6 +68,7 @@ from app.schemas import (
     ResultadoHistorial,
     ResultadoRegistro,
     HistorialEventoIn,
+    FichaPersona,
     TrazaPersona,
 )
 from app.shared._exceptions import (
@@ -637,6 +639,23 @@ def ver_trazabilidad(person_id: str):
     con su `ubicacion`, quién la reportó y el `timestamp`, en orden cronológico.
     Incluye datos sensibles (teléfono), por eso es solo de admin. `404` si no existe."""
     use_case = VerTrazabilidad(get_repo())
+    return _use_case_execute(use_case.execute, person_id=person_id)
+
+
+@app.get(
+    "/admin/personas/{person_id}/coincidencias",
+    response_model=FichaPersona,
+    tags=["admin"],
+    dependencies=[Depends(get_current_admin)],
+    responses=_ADMIN_RESPONSES,
+    summary="Ficha: quién buscaba a esta persona (inversa por cédula) + histórico",
+)
+def ver_ficha_persona(person_id: str):
+    """**Búsqueda inversa**: dado un encontrado, devuelve los **familiares que ya lo
+    estaban buscando** (match por cédula, con su contacto para el reencuentro) y, en
+    el mismo lugar, su **histórico** de avistamientos. Solo admin (datos sensibles).
+    `404` si el `person_id` no existe."""
+    use_case = VerFichaPersona(get_repo())
     return _use_case_execute(use_case.execute, person_id=person_id)
 
 
