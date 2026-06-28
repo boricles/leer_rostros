@@ -394,12 +394,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS abierto a TODOS los orígenes (de prueba). Cualquier front (vzlaencuentra.com,
-# localhost, etc.) puede consumir la API. La auth admin va por header Bearer (JWT),
-# por eso allow_credentials=False es compatible con allow_origins=["*"].
+# CORS: solo los orígenes configurados (por defecto SOLO https://vzlaencuentra.com)
+# pueden consumir la API desde el navegador. Ajustable con CORS_ORIGINS en el .env.
+# La auth admin va por header Bearer (JWT), por eso allow_credentials=False.
+# Nota: CORS lo aplica el NAVEGADOR; no bloquea clientes server-to-server (curl, etc.).
+_cors_origins = get_settings().cors_origins_list
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

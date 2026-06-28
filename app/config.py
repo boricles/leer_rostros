@@ -24,6 +24,18 @@ class Settings(BaseSettings):
     # Base de datos. Por defecto apunta al Postgres incluido en la imagen.
     database_url: str = "postgresql://rostros:rostros@localhost:5432/rostros"
 
+    # CORS: orígenes (front) autorizados a consumir la API desde el navegador.
+    # Lista separada por comas. Por defecto SOLO el front de producción (con y sin www,
+    # porque ambas variantes sirven el sitio y el navegador manda el Origin tal cual).
+    # Para agregar un entorno local: CORS_ORIGINS="https://vzlaencuentra.com,http://localhost:5173"
+    # Usá "*" para abrir a todos (solo en desarrollo).
+    cors_origins: str = "https://vzlaencuentra.com,https://www.vzlaencuentra.com"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """`cors_origins` como lista, sin espacios ni entradas vacías."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
     @property
     def usa_spaces(self) -> bool:
         return bool(self.spaces_key and self.spaces_secret and self.spaces_bucket)
