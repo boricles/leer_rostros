@@ -510,7 +510,7 @@ async def buscar_admin(
 
 @app.get(
     "/admin/personas",
-    response_model=PaginaPersonas,
+    response_model=PaginaPersonas | list[PersonaAdmin],
     tags=["admin"],
     dependencies=[Depends(get_current_admin)],
     responses=_ADMIN_RESPONSES,
@@ -522,14 +522,17 @@ def listar(
     moderacion: str | None = None,
     offset: int = 0,
     page: int | None = None,
+    paginado: bool = False,
 ):
-    """Lista registros paginados: devuelve `{data:[...], meta:{total_records, current_page,
-    total_pages, limit, offset}}`. Filtra por `estado` y/o `moderacion`.
+    """Lista registros. Filtra por `estado` y/o `moderacion`; pagina con `limite` +
+    `offset` (ej. `limite=100&offset=100`) o `page` (1-based).
 
-    Paginar con `limite` + `offset` (ej. página 2 de 100 → `limite=100&offset=100`) o con
-    `page` (1-based). `meta.total_records` es el TOTAL real (no la página)."""
+    **Compatibilidad:** por defecto devuelve un **array** de registros (la página actual).
+    Con **`?paginado=true`** devuelve el envelope **`{data:[...], meta:{total_records,
+    current_page, total_pages, limit, offset}}`** (usá esto para mostrar total de páginas;
+    o `GET /admin/stats` para el total real)."""
     use_case = ListarPersonasAdmin(get_repo())
-    return _use_case_execute(
+    pagina = _use_case_execute(
         use_case.execute,
         limite=limite,
         estado=estado,
@@ -537,6 +540,7 @@ def listar(
         offset=offset,
         page=page,
     )
+    return pagina if paginado else pagina.data
 
 
 @app.get(
