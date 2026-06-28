@@ -31,8 +31,8 @@ class FakePersonaRepository:
         self._policy = policy or MatchingPolicy(threshold=0.55)
         self._personas: list[PersonaBase] = []
         self._embeddings: dict[
-            str, list[bytes]
-        ] = {}  # person_id -> list of fake embeddings
+            str, list[Any]
+        ] = {}  # codigo -> list of fake embeddings for registered searches
         self._deleted: list[str] = []
 
     def add(
@@ -48,11 +48,15 @@ class FakePersonaRepository:
             ext = ct.split("/")[-1] if "/" in ct else "jpg"
             url = f"https://fake-cdn.example.com/personas/{foto_id}.{ext}"
             persona.photos.append(url)
+            if persona.codigo:
+                self._embeddings.setdefault(persona.codigo, []).extend(
+                    emb for emb, _calidad in _embs
+                )
         self._personas.append(persona)
         return persona.photos
 
     def search_by_estado(
-        self, embedding: Any, estado: str | None, limit: int
+        self, embedding: Any, estado: str | None, limit: int, offset: int = 0
     ) -> list[dict]:
         """Return stored personas filtered by estado, with fake distances.
 
@@ -67,10 +71,27 @@ class FakePersonaRepository:
             and (estado is None or p.estado.value == estado)
         ]
         results = []
-        for i, persona in enumerate(candidates[:limit]):
+        start = max(0, offset)
+        for i, persona in enumerate(candidates[start: start + limit], start=start):
             distancia = round(0.10 * (i + 1), 4)
             results.append(self._to_candidato_dict(persona, distancia))
         return results
+
+    def count_search_by_estado(self, estado: str | None) -> int:
+        """Count stored public personas filtered by estado."""
+        return len(
+            [
+                p
+                for p in self._personas
+                if p.moderacion == "aprobada"
+                and (estado is None or p.estado.value == estado)
+            ]
+        )
+
+    def get_busqueda_embedding(self, codigo: str) -> Any | None:
+        """Return first stored fake embedding for a search code."""
+        embeddings = self._embeddings.get(codigo)
+        return embeddings[0] if embeddings else None
 
     def search_admin(
         self, embedding: Any, estado: str | None, limit: int

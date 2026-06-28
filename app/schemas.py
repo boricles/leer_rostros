@@ -33,12 +33,26 @@ class Candidato(BaseModel):
     confianza: str = Field(..., description="'alta' | 'media' | 'baja'.")
 
 
+class PaginationMeta(BaseModel):
+    """Metadata for paginated result sets."""
+
+    total_records: int = Field(..., description="Total available records.")
+    current_page: int = Field(..., description="Current page derived from limit/offset.")
+    total_pages: int = Field(..., description="Total available pages.")
+    limit: int = Field(..., description="Maximum records returned by this page.")
+    offset: int = Field(..., description="Number of records skipped before this page.")
+
+
 class ResultadoBusqueda(BaseModel):
     """Respuesta del flujo FAMILIAR: su código + lista de candidatos."""
 
     codigo: str = Field(..., description="Código del registro de búsqueda generado.")
     total: int
     coincidencias: list[Candidato]
+    data: list[Candidato] = Field(
+        ..., description="Paginated results for new clients; same items as coincidencias."
+    )
+    meta: PaginationMeta
 
 
 class AlertaFamiliar(BaseModel):

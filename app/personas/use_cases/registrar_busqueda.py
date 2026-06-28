@@ -6,9 +6,10 @@ from app.domain.matching import MatchingPolicy
 from app.domain.persona import Estado, PersonaBase
 from app.domain.privacy import MenoresPrivacy
 from app.personas.repositories.persona import PersonaRepository
+from app.personas.use_cases._pagination import build_pagination_meta, normalize_pagination
 from app.schemas import Candidato, ResultadoBusqueda
 from app.shared._exceptions import PersonaValidationError, RostroNoDetectadoError
-from app.shared._helpers import LIMITE_MAX, ProcessedPhotos, _embedding_consulta, _gen_codigo
+from app.shared._helpers import ProcessedPhotos, _embedding_consulta, _gen_codigo
 
 
 class RegistrarBusqueda:
@@ -29,6 +30,8 @@ class RegistrarBusqueda:
         doc_numero: str | None,
         telefono_contacto: str | None,
         limite: int,
+        offset: int = 0,
+        page: int | None = None,
     ) -> ResultadoBusqueda:
         """Register a missing-person search and return ranked candidates.
 
@@ -55,7 +58,7 @@ class RegistrarBusqueda:
         if not (doc_numero or (nombre and nombre.strip())):
             raise PersonaValidationError("Indica al menos el nombre o el número de identificación.")
 
-        limite = max(1, min(LIMITE_MAX, limite))
+        limite, offset = normalize_pagination(limite=limite, offset=offset, page=page)
 
         # Build domain object
         person_id = uuid4()
@@ -80,7 +83,10 @@ class RegistrarBusqueda:
 
         # Search
         embedding = _embedding_consulta(procesadas)
-        encontrados = self._repo.search_by_estado(embedding, "encontrada", limite)
+        total_records = self._repo.count_search_by_estado("encontrada")
+        encontrados = self._repo.search_by_estado(
+            embedding, "encontrada", limite, offset=offset
+        )
 
         # Apply privacy and build response
         candidatos = [MenoresPrivacy(Candidato(**d)) for d in encontrados]
@@ -88,4 +94,10 @@ class RegistrarBusqueda:
             codigo=codigo,
             total=len(candidatos),
             coincidencias=candidatos,
+            data=candidatos,
+            meta=build_pagination_meta(
+                total_records=total_records,
+                limit=limite,
+                offset=offset,
+            ),
         )

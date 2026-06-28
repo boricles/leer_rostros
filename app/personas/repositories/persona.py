@@ -65,7 +65,24 @@ class PersonaRepository:
         JOIN personas p2 ON p2.id = b.foto_id
         WHERE b.rn = 1
         ORDER BY b.distancia ASC
-        LIMIT %s
+        LIMIT %s OFFSET %s
+    """
+
+    _COUNT_SEARCH = """
+        SELECT count(DISTINCT p.person_id)
+        FROM personas p
+        JOIN persona_embeddings pe ON pe.foto_id = p.id
+        WHERE p.moderacion = 'aprobada'
+            {estado_filter}
+    """
+
+    _GET_BUSQUEDA_EMBEDDING = """
+        SELECT pe.embedding
+        FROM personas p
+        JOIN persona_embeddings pe ON pe.foto_id = p.id
+        WHERE p.codigo = %s AND p.estado = 'buscada'
+        ORDER BY p.created_at ASC, pe.created_at ASC
+        LIMIT 1
     """
 
     # Admin search: same ROW_NUMBER() but NO moderacion filter
@@ -191,7 +208,7 @@ class PersonaRepository:
         return urls
 
     def search_by_estado(
-        self, embedding: Any, estado: str | None, limit: int
+        self, embedding: Any, estado: str | None, limit: int, offset: int = 0
     ) -> list[dict]:
         """Search personas by embedding, filtered by moderacion='aprobada'.
 
@@ -206,11 +223,26 @@ class PersonaRepository:
         params: tuple = (embedding, embedding)
         if estado:
             params = params + (estado,)
-        params = params + (limit,)
+        params = params + (limit, max(0, offset))
         sql = self._SEARCH.format(cols=cols, estado_filter=estado_filter)
         with self._pool.connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._row_to_candidato_dict(r) for r in rows]
+
+    def count_search_by_estado(self, estado: str | None) -> int:
+        """Count public searchable personas with embeddings for pagination metadata."""
+        estado_filter = "AND p.estado = %s" if estado else ""
+        params: tuple = (estado,) if estado else ()
+        sql = self._COUNT_SEARCH.format(estado_filter=estado_filter)
+        with self._pool.connection() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return int(row[0]) if row else 0
+
+    def get_busqueda_embedding(self, codigo: str) -> Any | None:
+        """Return the stored query embedding for a FAMILIAR search code."""
+        with self._pool.connection() as conn:
+            row = conn.execute(self._GET_BUSQUEDA_EMBEDDING, (codigo,)).fetchone()
+        return row[0] if row else None
 
     def search_admin(
         self, embedding: Any, estado: str | None, limit: int

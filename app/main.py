@@ -14,7 +14,7 @@ from functools import wraps
 from typing import Any
 
 import requests
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import faces
@@ -34,6 +34,7 @@ from app.personas.repositories.persona import PersonaRepository
 from app.personas.use_cases import (
     BuscarAdmin,
     EliminarPersona,
+    ListarCoincidenciasBusqueda,
     ListarPersonasAdmin,
     ModerarPersona,
     RegistrarBusqueda,
@@ -234,10 +235,14 @@ Un familiar sube la foto de a quién busca. Se registra como *buscada* y se devu
 | `doc_tipo` | texto | no | `V` |
 | `doc_numero` | texto | no* | `12345678` |
 | `telefono_contacto` | texto | no | `0412-1234567` |
-| `limite` | entero | no (def. `10`) | `20` |
+| `limit` / `limite` | entero | no (def. `10`) | `20` |
+| `offset` | entero | no (def. `0`) | `20` |
+| `page` | entero | no | `2` |
 
 \\* Manda **al menos** `nombre` o `doc_numero` (validación).
-El front decide cuántas coincidencias recibir con **`limite`** (1-50).
+El front decide cuántas coincidencias recibir con **`limit`** (1-50). **`limite`**
+se mantiene por compatibilidad y **`offset`** / **`page`** permiten cargar más
+coincidencias sin traer todo el listado en una sola respuesta.
 
 ### 🟢 Flujo RESCATISTA — `POST /encontrados`
 Quien encontró a alguien lo registra. Si un familiar ya lo buscaba, la respuesta trae
@@ -384,9 +389,17 @@ async def registrar_busqueda(
     limite: int = Form(
         10, description="Cuántas coincidencias devolver (1-50). El front lo decide."
     ),
+    limit: int | None = Form(
+        None, description="Cantidad de coincidencias por pagina (1-50)."
+    ),
+    offset: int = Form(0, description="Cantidad de coincidencias a omitir."),
+    page: int | None = Form(
+        None, description="Pagina 1-based. Si se envia, tiene prioridad sobre offset."
+    ),
 ):
     procesadas = await _procesar_fotos(files)
     use_case = RegistrarBusqueda(get_repo(), get_policy())
+    limite_final = limit if limit is not None else limite
     return _use_case_execute(
         use_case.execute,
         procesadas=procesadas,
@@ -396,7 +409,40 @@ async def registrar_busqueda(
         doc_tipo=doc_tipo,
         doc_numero=doc_numero,
         telefono_contacto=telefono_contacto,
-        limite=limite,
+        limite=limite_final,
+        offset=offset,
+        page=page,
+    )
+
+
+@app.get(
+    "/buscados/{codigo}/coincidencias",
+    response_model=ResultadoBusqueda,
+    tags=["familiar"],
+    summary="Familiar: cargar mas coincidencias de una busqueda",
+)
+def listar_coincidencias_busqueda(
+    codigo: str,
+    limite: int | None = Query(None, description="Alias legacy de limit."),
+    limit: int | None = Query(
+        None, description="Cantidad de resultados por pagina (1-50)."
+    ),
+    offset: int = Query(0, description="Cantidad de resultados a omitir."),
+    page: int | None = Query(
+        None, description="Pagina 1-based. Si se envia, tiene prioridad sobre offset."
+    ),
+):
+    """Devuelve mas coincidencias de una busqueda existente sin registrarla de nuevo."""
+    use_case = ListarCoincidenciasBusqueda(get_repo())
+    limite_final = (
+        limit if limit is not None else (limite if limite is not None else 10)
+    )
+    return _use_case_execute(
+        use_case.execute,
+        codigo=codigo,
+        limite=limite_final,
+        offset=offset,
+        page=page,
     )
 
 
