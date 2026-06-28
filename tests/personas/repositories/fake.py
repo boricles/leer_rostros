@@ -73,6 +73,32 @@ class FakePersonaRepository:
         off = max(0, offset)
         return results[off: off + limit]
 
+    def find_exact_match(
+        self,
+        *,
+        doc_numero: str,
+        nombre: str,
+        apellido: str | None = None,
+        estado: str = "encontrada",
+    ) -> dict | None:
+        """Match EXACTO por texto (cédula + nombre [+ apellido]) normalizado."""
+        def norm(s: str | None) -> str:
+            return s.strip().casefold() if s else ""
+
+        for p in self._personas:
+            if p.estado.value != estado or p.moderacion != "aprobada":
+                continue
+            if not p.doc_numero or norm(p.doc_numero) != norm(doc_numero):
+                continue
+            if not p.nombre or norm(p.nombre) != norm(nombre):
+                continue
+            if apellido and apellido.strip() and norm(p.apellido) != norm(apellido):
+                continue
+            d = self._to_candidato_dict(p, 0.0)
+            d.update({"distancia": 0.0, "coincidencia": 100, "confianza": "alta"})
+            return d
+        return None
+
     def list_publico(self, estado: str, limit: int, offset: int = 0) -> list[dict]:
         """Listado público (encontradas aprobadas) con campos no sensibles."""
         filtered = [

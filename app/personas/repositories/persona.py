@@ -144,6 +144,23 @@ class PersonaRepository:
         SELECT image_key FROM personas WHERE person_id = %s
     """
 
+    # Match EXACTO por texto: cédula + nombre (+ apellido opcional), una fila por persona.
+    # Comparación normalizada (trim + minúsculas). Solo personas visibles (aprobadas).
+    _FIND_EXACT = """
+        SELECT DISTINCT ON (p.person_id)
+               p.person_id, p.estado, p.es_menor, p.nombre, p.apellido, p.edad,
+               p.refugio, p.ubicacion, p.telefono_responsable, p.telefono_contacto,
+               p.descripcion, p.encontrado_por, p.image_url
+        FROM personas p
+        WHERE p.estado = %s
+          AND p.moderacion = 'aprobada'
+          AND p.doc_numero IS NOT NULL AND lower(btrim(p.doc_numero)) = lower(btrim(%s))
+          AND p.nombre IS NOT NULL AND lower(btrim(p.nombre)) = lower(btrim(%s))
+          {apellido_filter}
+        ORDER BY p.person_id, p.created_at ASC
+        LIMIT 1
+    """
+
     def __init__(self, pool: ConnectionPool, policy: MatchingPolicy):
         self._pool = pool
         self._policy = policy
@@ -224,6 +241,40 @@ class PersonaRepository:
         with self._pool.connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._row_to_candidato_dict(r) for r in rows]
+
+    def find_exact_match(
+        self,
+        *,
+        doc_numero: str,
+        nombre: str,
+        apellido: str | None = None,
+        estado: str = "encontrada",
+    ) -> dict | None:
+        """Busca un match EXACTO por texto entre los `estado` visibles (aprobados).
+
+        Coincidencia TOTAL de cédula + nombre (y apellido si se aporta), normalizada
+        (trim + minúsculas). Pensada como atajo: si hay match textual exacto no hace
+        falta la búsqueda por imagen.
+
+        Devuelve un dict con forma de Candidato (distancia=0.0, coincidencia=100,
+        confianza='alta') o None si no hay coincidencia textual total. No aplica
+        privacidad de menores (se aplica a nivel de uso/endpoint).
+        """
+        ap = apellido.strip() if apellido else ""
+        apellido_filter = (
+            "AND p.apellido IS NOT NULL AND lower(btrim(p.apellido)) = lower(btrim(%s))"
+            if ap
+            else ""
+        )
+        params: tuple = (estado, doc_numero, nombre)
+        if ap:
+            params = params + (ap,)
+        sql = self._FIND_EXACT.format(apellido_filter=apellido_filter)
+        with self._pool.connection() as conn:
+            row = conn.execute(sql, params).fetchone()
+        if row is None:
+            return None
+        return self._exact_row_to_candidato_dict(row)
 
     def list_publico(self, estado: str, limit: int, offset: int = 0) -> list[dict]:
         """Listado PÚBLICO paginado (sin datos sensibles). Solo moderacion='aprobada'."""
@@ -401,6 +452,41 @@ class PersonaRepository:
             "distancia": round(d, 4),
             "coincidencia": self._policy.match_percentage(d),
             "confianza": self._policy.confidence_band(d),
+        }
+
+    def _exact_row_to_candidato_dict(self, row: tuple) -> dict:
+        """Candidato dict para un match EXACTO por texto: 100% sin pasar por el sigmoid."""
+        (
+            person_id,
+            estado,
+            es_menor,
+            nombre,
+            apellido,
+            edad,
+            refugio,
+            ubicacion,
+            tel_resp,
+            tel_contacto,
+            descripcion,
+            encontrado_por,
+            image_url,
+        ) = row
+        return {
+            "person_id": str(person_id),
+            "estado": estado,
+            "es_menor": bool(es_menor),
+            "nombre": nombre,
+            "apellido": apellido,
+            "edad": edad,
+            "refugio": refugio,
+            "ubicacion": ubicacion or refugio,
+            "telefono": tel_resp or tel_contacto,
+            "encontrado_por": encontrado_por,
+            "descripcion": descripcion,
+            "image_url": image_url,
+            "distancia": 0.0,
+            "coincidencia": 100,
+            "confianza": "alta",
         }
 
     def _row_to_admin_dict(self, row: tuple) -> dict:

@@ -274,6 +274,118 @@ class TestRegistrarBusquedaPrivacy:
         assert candidato.apellido == "González"
 
 
+class TestRegistrarBusquedaMatchExacto:
+    """Atajo por texto: cédula + nombre que coinciden TOTALMENTE saltan la imagen."""
+
+    def _seed_encontrada(self, fake_repo, **kw):
+        defaults = dict(
+            person_id=uuid4(),
+            estado=Estado.ENCONTRADA,
+            es_menor=False,
+            moderacion="aprobada",
+            photos=["https://fake-cdn.example.com/personas/test.jpg"],
+        )
+        defaults.update(kw)
+        found = PersonaBase(**defaults)
+        fake_repo._personas.append(found)
+        return found
+
+    def test_cedula_y_nombre_exactos_devuelven_100(self, use_case, fake_repo):
+        """Cédula + nombre idénticos → un solo candidato al 100%, confianza alta."""
+        self._seed_encontrada(
+            fake_repo, nombre="María", apellido="González", doc_numero="12345678"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="María",
+            apellido="González",
+            edad=None,
+            doc_tipo="V",
+            doc_numero="12345678",
+            telefono_contacto=None,
+            limite=10,
+        )
+        assert result.total == 1
+        candidato = result.coincidencias[0]
+        assert candidato.coincidencia == 100
+        assert candidato.confianza == "alta"
+        assert candidato.distancia == 0.0
+        assert candidato.nombre == "María"
+
+    def test_match_exacto_es_case_insensitive_y_trim(self, use_case, fake_repo):
+        """Coincidencia normalizada: mayúsculas/espacios no rompen el match."""
+        self._seed_encontrada(
+            fake_repo, nombre="Juan", apellido="Pérez", doc_numero="999"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="  juan ",
+            apellido="PÉREZ",
+            edad=None,
+            doc_tipo="V",
+            doc_numero=" 999 ",
+            telefono_contacto=None,
+            limite=10,
+        )
+        assert result.total == 1
+        assert result.coincidencias[0].coincidencia == 100
+
+    def test_cedula_distinta_cae_a_busqueda_por_imagen(self, use_case, fake_repo):
+        """Si la cédula no coincide, NO hay atajo: se usa la búsqueda facial."""
+        self._seed_encontrada(
+            fake_repo, nombre="María", apellido="González", doc_numero="11111111"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="María",
+            apellido="González",
+            edad=None,
+            doc_tipo="V",
+            doc_numero="99999999",  # cédula distinta
+            telefono_contacto=None,
+            limite=10,
+        )
+        # Cae al flujo por imagen: el fake asigna distancia 0.10 (no 0.0).
+        assert result.total == 1
+        assert result.coincidencias[0].distancia != 0.0
+
+    def test_nombre_distinto_cae_a_busqueda_por_imagen(self, use_case, fake_repo):
+        """Misma cédula pero nombre distinto → no es match total, va por imagen."""
+        self._seed_encontrada(
+            fake_repo, nombre="María", apellido="González", doc_numero="12345678"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="Marielena",  # nombre distinto
+            apellido="González",
+            edad=None,
+            doc_tipo="V",
+            doc_numero="12345678",
+            telefono_contacto=None,
+            limite=10,
+        )
+        assert result.total == 1
+        assert result.coincidencias[0].distancia != 0.0
+
+    def test_sin_cedula_no_intenta_atajo(self, use_case, fake_repo):
+        """Sin cédula no hay atajo aunque el nombre coincida; va por imagen."""
+        self._seed_encontrada(
+            fake_repo, nombre="María", apellido="González", doc_numero="12345678"
+        )
+        result = use_case.execute(
+            procesadas=_make_procesadas(),
+            nombre="María",
+            apellido="González",
+            edad=None,
+            doc_tipo=None,
+            doc_numero=None,  # sin cédula
+            telefono_contacto=None,
+            limite=10,
+        )
+        assert result.total == 1
+        assert result.coincidencias[0].distancia != 0.0
+
+
 class TestRegistrarBusquedaRepoIntegration:
     def test_repo_add_called_with_persona_base_not_dict(self, use_case, fake_repo):
         """Assert repo received PersonaBase instance."""

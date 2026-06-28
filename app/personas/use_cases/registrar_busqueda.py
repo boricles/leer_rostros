@@ -86,6 +86,25 @@ class RegistrarBusqueda:
         # Persist
         self._repo.add(person_id, persona, procesadas)
 
+        # Atajo por TEXTO: si nos dieron cédula + nombre y coinciden TOTALMENTE con un
+        # encontrado visible, devolvemos ese match al 100% sin búsqueda por imagen.
+        # Si algo no coincide, caemos a la comparación facial de siempre.
+        if doc_numero and doc_numero.strip() and nombre and nombre.strip():
+            exacto = self._repo.find_exact_match(
+                doc_numero=doc_numero,
+                nombre=nombre,
+                apellido=apellido,
+                estado="encontrada",
+            )
+            if exacto is not None:
+                candidato = MenoresPrivacy(Candidato(**exacto))
+                return ResultadoBusqueda(
+                    codigo=codigo,
+                    total=1,
+                    coincidencias=[candidato],
+                    meta=PageMeta(**construir_meta(1, limite, offset)),
+                )
+
         # Search (paginado) + total real del universo de encontrados visibles
         embedding = _embedding_consulta(procesadas)
         encontrados = self._repo.search_by_estado(embedding, "encontrada", limite, offset)
