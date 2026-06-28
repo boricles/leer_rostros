@@ -1,5 +1,6 @@
 """Personas use cases — one class per business flow."""
 
+from app.personas.use_cases.agregar_historial import AgregarHistorial
 from app.personas.use_cases.buscar_admin import BuscarAdmin
 from app.personas.use_cases.eliminar_persona import EliminarPersona
 from app.personas.use_cases.listar_personas_admin import ListarPersonasAdmin
@@ -7,8 +8,11 @@ from app.personas.use_cases.listar_publico import ListarPublico
 from app.personas.use_cases.moderar_persona import ModerarPersona
 from app.personas.use_cases.registrar_busqueda import RegistrarBusqueda
 from app.personas.use_cases.registrar_encontrado import RegistrarEncontrado
+from app.personas.use_cases.ver_ficha_persona import VerFichaPersona
+from app.personas.use_cases.ver_trazabilidad import VerTrazabilidad
 
 __all__ = [
+    "AgregarHistorial",
     "BuscarAdmin",
     "EliminarPersona",
     "ListarPersonasAdmin",
@@ -16,4 +20,6 @@ __all__ = [
     "ModerarPersona",
     "RegistrarBusqueda",
     "RegistrarEncontrado",
+    "VerFichaPersona",
+    "VerTrazabilidad",
 ]
