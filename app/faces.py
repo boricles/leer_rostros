@@ -120,6 +120,21 @@ def embeddings_from_bytes(data: bytes) -> list[tuple[np.ndarray, float]]:
     return results
 
 
+def strip_exif(data: bytes) -> bytes:
+    """Elimina metadatos EXIF/GPS re-codificando la imagen via OpenCV."""
+    arr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return data  # no se pudo decodificar; fallará después en _best_face
+    if data[:3] == b"\xff\xd8\xff":
+        _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    elif data[:4] == b"\x89PNG":
+        _, buf = cv2.imencode(".png", img)
+    else:
+        _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    return buf.tobytes()
+
+
 def distance_to_confidence(distance: float) -> float:
     """Convierte distancia coseno → porcentaje de confianza (0–100%) con sigmoide calibrada.
 

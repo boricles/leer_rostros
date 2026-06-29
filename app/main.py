@@ -132,6 +132,25 @@ def get_testimonio_repo() -> TestimonioRepository:
     return _testimonio_repo
 
 
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB por archivo
+
+_MAGIC_BYTES = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG", "image/png"),
+    (b"RIFF", "image/webp"),
+)
+
+
+def _validate_image_data(data: bytes) -> None:
+    """Valida tamaño y tipo de archivo por magic bytes."""
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise ValueError(
+            f"La imagen excede el límite de {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+        )
+    if not any(data[: len(magic)] == magic for magic, _ in _MAGIC_BYTES):
+        raise ValueError("Formato de imagen no soportado. Usa JPEG, PNG o WebP.")
+
+
 async def _procesar_fotos(files: list[UploadFile]):
     """Por cada foto con rostro válido, extrae sus embeddings (base + rotaciones ±15°).
 
@@ -142,12 +161,18 @@ async def _procesar_fotos(files: list[UploadFile]):
         data = await f.read()
         if not data:
             continue
+        try:
+            _validate_image_data(data)
+        except ValueError:
+            continue
         ct = f.content_type or "image/jpeg"
         try:
             embs = faces.embeddings_from_bytes(data)
         except ValueError:
             continue  # sin rostro / baja calidad: se omite
-        procesadas.append((data, ct, embs))
+        # Limpiar metadatos EXIF antes de almacenar
+        clean_data = faces.strip_exif(data)
+        procesadas.append((clean_data, ct, embs))
     return procesadas
 
 
@@ -713,6 +738,10 @@ async def buscar_admin(
     ),
 ):
     data = await file.read()
+    try:
+        _validate_image_data(data)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
     try:
         embedding, _ = faces.embedding_from_bytes(data)
     except ValueError as e:
