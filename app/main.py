@@ -16,6 +16,10 @@ from typing import Any
 import requests
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from starlette.requests import Request
 
 from app import faces
 from app.auth import (
@@ -401,6 +405,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Rate limiting: protege login contra brute-force y endpoints públicos contra abuso.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS: solo los orígenes configurados (por defecto SOLO https://vzlaencuentra.com)
 # pueden consumir la API desde el navegador. Ajustable con CORS_ORIGINS en el .env.
 # La auth admin va por header Bearer (JWT), por eso allow_credentials=False.
@@ -426,7 +435,8 @@ def health():
     tags=["admin"],
     summary="Login del superadmin",
 )
-def admin_login(datos: LoginBody):
+@limiter.limit("5/minute")
+def admin_login(request: Request, datos: LoginBody):
     """Devuelve un JWT. Úsalo como header `Authorization: Bearer <token>` en los
     demás endpoints de admin. Body JSON: `{"usuario":"admin","password":"..."}`.
 
@@ -455,7 +465,9 @@ def admin_login(datos: LoginBody):
     tags=["familiar"],
     summary="Familiar: registrar búsqueda y ver coincidencias",
 )
+@limiter.limit("10/minute")
 async def registrar_busqueda(
+    request: Request,
     files: list[UploadFile] = File(
         ..., description="Foto(s) del rostro de la persona buscada (obligatorio)."
     ),
@@ -534,7 +546,9 @@ def listar_coincidencias_busqueda(
     tags=["rescatista"],
     summary="Rescatista: registrar persona encontrada",
 )
+@limiter.limit("10/minute")
 async def registrar_encontrado(
+    request: Request,
     files: list[UploadFile] = File(
         ..., description="Foto(s) del rostro de la persona encontrada (obligatorio)."
     ),
@@ -849,7 +863,8 @@ def ver_ficha_persona(person_id: str):
     tags=["reportes"],
     summary="Reportar una falla de la página",
 )
-def reportar_falla(datos: ReporteFallaIn):
+@limiter.limit("20/minute")
+def reportar_falla(request: Request, datos: ReporteFallaIn):
     """Cualquier usuario puede reportar un problema/bug de la web. Queda en estado
     `pendiente` para que el superadmin lo revise en `GET /admin/reportes`."""
     use_case = RegistrarFalla(get_reporte_repo())
@@ -863,7 +878,8 @@ def reportar_falla(datos: ReporteFallaIn):
     tags=["reportes"],
     summary="Reportar una publicación o foto inadecuada",
 )
-def reportar_publicacion(datos: ReportePublicacionIn):
+@limiter.limit("20/minute")
+def reportar_publicacion(request: Request, datos: ReportePublicacionIn):
     """Reporta una publicación inadecuada por su `person_id`. La publicación NO se
     oculta automáticamente: queda registrada para que el superadmin la revise y
     decida (puede rechazarla o eliminarla con los endpoints de moderación)."""
@@ -929,7 +945,8 @@ def _descargar_imagen(url: str) -> bytes:
     responses=_ADMIN_RESPONSES,
     summary="Importar UNA persona encontrada (descarga la foto por URL)",
 )
-async def importar_encontrado(datos: ImportarEncontradoIn):
+@limiter.limit("30/minute")
+async def importar_encontrado(request: Request, datos: ImportarEncontradoIn):
     """Registra una persona **encontrada** a partir de un registro de importación:
     descarga la `foto_url`, extrae el/los embeddings y la guarda. Pensado para que un
     script suba grandes volúmenes (ver `cargar_encontrados.py`).

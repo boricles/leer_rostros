@@ -16,6 +16,7 @@ onnxruntime
 passlib[bcrypt]<1.8
 bcrypt<4.1
 PyJWT>=2.8,<3
+slowapi>=0.1.9
 
 # --- Testing (dev) ---
 pytest>=7.0
